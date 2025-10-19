@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Day 3 — 線上相簿：圖片上傳與預覽</title>
+  <meta name="description" content="30 天打造線上相簿：Day 3 圖片上傳與預覽。使用 input type=file 讀取並預覽圖片。" />
+  <style>
+    /* =====================================
+       Day 3：圖片上傳與預覽
+       - 新增 <input type="file">（單張）
+       - 使用 FileReader/URL 預覽圖片
+       - 尚未壓縮（Day 4 會加上 <canvas> 縮圖/壓縮）
+       ===================================== */
+
+    :root {
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #ff7a1a;
+      --accent: #ffc188;
+      --border: #e5e7eb;
+      --radius: 18px;
+      --shadow: 0 10px 28px rgba(17, 24, 39, 0.08);
+      --maxw: 1100px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Noto Sans, "Microsoft JhengHei", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 400px at 10% -10%, color-mix(in oklab, var(--accent) 28%, transparent), transparent 60%),
+        radial-gradient(1200px 400px at 110% 10%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 60%),
+        var(--bg);
+      line-height: 1.7;
+    }
+    img { display: block; max-width: 100%; height: auto; }
+    a { color: inherit; text-decoration: none; }
+
+    header { position: sticky; top: 0; z-index: 20; backdrop-filter: saturate(1.2) blur(10px); background: color-mix(in oklab, #fff 92%, transparent); border-bottom: 1px solid var(--border); }
+    .nav { max-width: var(--maxw); margin: 0 auto; padding: 14px 20px; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }
+    .brand .logo { width: 34px; height: 34px; border-radius: 10px; background: conic-gradient(from 200deg, var(--primary), var(--accent)); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+    .brand .title { font-size: clamp(18px, 2.2vw, 22px); }
+    .brand .title b { color: var(--primary); }
+    .nav .sub { justify-self: center; color: var(--muted); font-size: 14px; }
+
+    main { max-width: var(--maxw); margin: 26px auto 64px; padding: 0 20px; }
+
+    .hero { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 26px; }
+    .hero h1 { margin: 0 0 6px; font-size: clamp(24px, 3.4vw, 36px); }
+    .hero p { margin: 0; color: var(--muted); }
+
+    .grid { display: grid; gap: 18px; grid-template-columns: 1fr; margin-top: 18px; }
+    @media (min-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
+
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
+    .panel h2 { margin: 0 0 8px; font-size: clamp(18px, 2.4vw, 22px); }
+    .muted { color: var(--muted); }
+
+    /* ---- 上傳工具列 ---- */
+    .uploader { display: grid; gap: 12px; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+
+    .file-input {
+      appearance: none; width: 100%; padding: 11px 14px; border-radius: 14px;
+      border: 1px solid var(--border); background: #fff; font-size: 14px; cursor: pointer;
+    }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border); background: #fff; font-weight: 700; cursor: pointer; }
+    .btn.primary { background: var(--primary); color: #fff; border-color: color-mix(in oklab, var(--primary) 60%, #0000); }
+
+    /* ---- 預覽卡 ---- */
+    .preview { display: grid; gap: 12px; }
+    .thumb {
+      position: relative; overflow: hidden; border-radius: 16px; border: 1px solid var(--border); background: #fff; aspect-ratio: 4/3; display: grid; place-items: center;
+    }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb.empty { color: var(--muted); }
+
+    .caption { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: var(--muted); }
+    .caption .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+
+    /* ---- 拖放上傳（可選，用於體驗） ---- */
+    .dropzone {
+      margin-top: 8px; border: 2px dashed var(--border); border-radius: 14px; padding: 16px; text-align: center; color: var(--muted);
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .dropzone.active { border-color: var(--primary); background: #fffaf6; }
+
+    footer { color: var(--muted); font-size: 13px; text-align: center; margin: 16px 0 36px; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="nav" aria-label="主導覽">
+      <div class="brand" aria-label="網站名稱">
+        <div class="logo" aria-hidden="true"></div>
+        <div class="title">線上相簿 · <b>30 天計畫</b></div>
+      </div>
+      <div class="sub">Day 3：圖片上傳與預覽（單張，不壓縮）</div>
+      <div></div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="title">
+      <h1 id="title">新增上傳按鈕，立即預覽選取的圖片</h1>
+      <p class="muted">本日只做「選一張並預覽」。<br>Day 4 會加入 <code>&lt;canvas&gt;</code> 進行縮圖/壓縮；Day 5 才把圖卡放進 Gallery；Day 7 才支援一次選多張。</p>
+    </section>
+
+    <section class="grid" aria-label="上傳與預覽">
+      <article class="panel" aria-labelledby="uploader">
+        <h2 id="uploader">上傳工具</h2>
+        <div class="uploader">
+          <label for="file" class="muted">選擇圖片（僅支援影像檔，單張）</label>
+          <div class="row">
+            <input id="file" class="file-input" type="file" accept="image/*" />
+            <button id="clearBtn" class="btn" type="button">清除</button>
+          </div>
+          <div id="dropzone" class="dropzone" aria-live="polite">或拖曳圖片到這裡</div>
+        </div>
+      </article>
+
+      <aside class="panel" aria-labelledby="preview">
+        <h2 id="preview">預覽</h2>
+        <div class="preview">
+          <div id="thumb" class="thumb empty" role="img" aria-label="預覽區">
+            尚未選擇圖片
+          </div>
+          <div class="caption">
+            <span id="fileName" class="name">—</span>
+            <a id="openRaw" class="btn" target="_blank" rel="noopener" style="display:none">原始檔</a>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <footer>© 2025 線上相簿教學 · Day 3 上傳與預覽完成</footer>
+
+  <script>
+    // =========================
+    // Day 3：圖片上傳與預覽
+    // - 單張上傳，不壓縮（Day 4 再處理壓縮）
+    // - 以 FileReader 或 URL.createObjectURL 預覽
+    // =========================
+
+    const App = {
+      day: 3,
+      state: {
+        current: null, // { file, url }
+      },
+    };
+
+    const $file = document.getElementById('file');
+    const $thumb = document.getElementById('thumb');
+    const $fileName = document.getElementById('fileName');
+    const $openRaw = document.getElementById('openRaw');
+    const $clear = document.getElementById('clearBtn');
+    const $drop = document.getElementById('dropzone');
+
+    function revokeURL() {
+      if (App.state.current?.url) {
+        URL.revokeObjectURL(App.state.current.url);
+      }
+    }
+
+    function resetPreview() {
+      revokeURL();
+      App.state.current = null;
+      $thumb.classList.add('empty');
+      $thumb.innerHTML = '尚未選擇圖片';
+      $fileName.textContent = '—';
+      $openRaw.style.display = 'none';
+      $openRaw.removeAttribute('href');
+      $file.value = '';
+    }
+
+    function isImage(file) {
+      return file && file.type.startsWith('image/');
+    }
+
+    function handleFile(file) {
+      if (!isImage(file)) {
+        alert('請選擇圖片檔案（jpg、png、gif、webp…）');
+        return;
+      }
+      // 產生預覽 URL
+      revokeURL();
+      const url = URL.createObjectURL(file);
+      App.state.current = { file, url };
+
+      // 渲染預覽
+      const img = new Image();
+      img.alt = file.name || '預覽圖片';
+      img.onload = () => {
+        $thumb.classList.remove('empty');
+        $thumb.innerHTML = '';
+        $thumb.appendChild(img);
+        $fileName.textContent = file.name || '(未命名)';
+        $openRaw.style.display = 'inline-flex';
+        $openRaw.href = url;
+      };
+      img.onerror = () => {
+        resetPreview();
+        alert('預覽失敗，請換一張圖片或重新選擇');
+      };
+      img.src = url;
+    }
+
+    // <input type=file>
+    $file.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) handleFile(file);
+      else resetPreview();
+    });
+
+    // 清除
+    $clear.addEventListener('click', resetPreview);
+
+    // 拖放上傳（同樣限制單張）
+    ;['dragenter','dragover'].forEach(type => {
+      $drop.addEventListener(type, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        $drop.classList.add('active');
+      });
+    });
+    ;['dragleave','drop'].forEach(type => {
+      $drop.addEventListener(type, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        $drop.classList.remove('active');
+      });
+    });
+    $drop.addEventListener('drop', (e) => {
+      const file = e.dataTransfer?.files?.[0];
+      if (file) handleFile(file);
+    });
+
+    // 離開頁面時釋放 URL
+    window.addEventListener('beforeunload', revokeURL);
+
+    console.log('%c Day 3：上傳與預覽就緒（單張，不壓縮）', 'padding:6px 10px;border:1px solid #eee;border-radius:8px');
+  </script>
+</body>
+</html>
+

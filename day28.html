@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day 28｜線上相簿 - PWA（離線快取縮圖）</title>
+  <!--
+    說明：
+    1) 這是「單一 HTML 檔可直接跑」版本，整合 Day 27.5（多使用者/分享/回收桶/縮圖/Lazy/Debounce）。
+    2) 另外加入 PWA：Service Worker + Web App Manifest（以 data:URL 方式）。
+       - 首次載入後，SW 會快取 App Shell（此檔）與「縮圖路徑 /thumbs/<id>.jpg」。
+       - 我們將縮圖（base64 DataURL）同步寫入 CacheStorage，
+         讓 <img src="/thumbs/<id>.jpg"> 在離線時也能命中快取，達到「離線瀏覽縮圖」。
+       - 點「看原圖」仍用 dataURL，離線也可顯示（原圖本就保存於 LocalStorage）。
+    3) 注意：Service Worker 需在 HTTPS 或 http://localhost 之類的安全環境。
+       把這個 index.html 用「VS Code Live Server」或任何簡易靜態伺服器開啟即可。
+       直接以 file:// 開啟將無法註冊 SW（但程式仍可使用）。
+  -->
+  <style>
+    :root{ --bg:#0b1220; --elev:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --primary:#ff954f; --danger:#fb7185; --border:#1f2937; --radius:14px; --shadow:0 10px 30px rgba(0,0,0,.35) }
+    @media(prefers-color-scheme:light){ :root{ --bg:#ffffff; --elev:#f9fafb; --text:#1f2328; --muted:#6b7280; --primary:#ff8c42; --danger:#e11d48; --border:#e5e7eb; --shadow:0 8px 24px rgba(17,24,39,.10) } }
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans CJK TC","Microsoft JhengHei",Arial,sans-serif;line-height:1.65}
+    .container{max-width:1100px;margin:0 auto;padding:24px;box-sizing:border-box}
+    header{border-bottom:1px solid var(--border)}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand__logo{width:44px;height:44px;border-radius:10px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    .brand__title{margin:0;font-size:20px}
+    .brand__subtitle{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+    .banner{margin-top:10px;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:13px}
+
+    .toolbar{display:grid;gap:12px;margin-top:16px;align-items:center;grid-template-columns:1fr 220px 140px 120px auto}
+    @media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr 1fr}}
+    @media(max-width:640px){.toolbar{grid-template-columns:1fr}}
+    .toolbar input[type=text],.toolbar button,.toolbar select,.toolbar input[type=file]{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+
+    main{padding:24px 0}
+    .grid{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+    @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--elev);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+    .thumb{aspect-ratio:4/3;background:#1d283a;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .meta{padding:12px;display:grid;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .title{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .time{font-size:12px;color:var(--muted)}
+    .tags{display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:#cbd5e1;background:#0b1220}
+
+    .switcher{display:flex;gap:8px}
+    .switcher .tabbtn{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;cursor:pointer;color:var(--text)}
+    .switcher .tabbtn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:0 6px;border-radius:999px;background:var(--border);color:var(--muted);font-size:12px;margin-left:6px}
+
+    .statusbar{display:flex;align-items:center;justify-content:space-between;margin:8px 0 12px;color:var(--muted);font-size:13px}
+    .empty{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;color:var(--muted);display:flex;align-items:center;justify-content:center;grid-column:1/-1;background:#fff0}
+
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+    .modal{width:560px;max-width:720px;background:var(--bg);border-radius:14px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden}
+    .modal__header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800}
+    .modal__body{padding:16px;display:grid;gap:12px}
+    .modal__footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+    .field input[type=text],.field textarea{width:100%;box-sizing:border-box;padding:12px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+
+    .btn{cursor:pointer;border-radius:10px}
+    .btn.small{padding:8px 10px;font-size:12px}
+    .btn.primary{background:var(--primary);color:#fff;border:none;padding:10px 14px}
+    .btn.secondary{background:#fff0;border:1px solid var(--border);padding:10px 14px}
+    .btn.danger{background:var(--danger);color:#fff;border:none;padding:10px 14px}
+  </style>
+
+  <!-- Manifest 以 data:URL 方式內嵌（安裝 App 圖示僅示意） -->
+  <link id="app-manifest" rel="manifest" href="data:application/manifest+json,{\n  \"name\": \"線上相簿 (Day 28)\",\n  \"short_name\": \"相簿\",\n  \"start_url\": \".\",\n  \"display\": \"standalone\",\n  \"background_color\": \"#0b1220\",\n  \"theme_color\": \"#ff954f\",\n  \"icons\": [\n    {\"src\": \"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23ff954f'/%3E%3Ctext x='50%25' y='56%25' text-anchor='middle' font-size='28' font-family='Arial' fill='white'%3EPA%3C/text%3E%3C/svg%3E\", \"sizes\": \"64x64\", \"type\": \"image/svg+xml\"}\n  ]\n}">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 28）</h1>
+          <p class="brand__subtitle">PWA：離線快取縮圖 ＋ 多使用者 / 分享 / 回收桶 / Lazy / 縮圖壓縮 / Debounce</p>
+        </div>
+      </div>
+
+      <div class="banner" id="pwaBanner">提示：建議以 <strong>http://localhost</strong> 或任何靜態伺服器開啟本檔，才能註冊 Service Worker 與安裝 PWA。</div>
+
+      <div id="authedToolbar" class="toolbar" style="display:none" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）" aria-label="搜尋">
+        <input id="fileInput" type="file" accept="image/*" multiple aria-label="上傳圖片">
+        <select id="sortBy" aria-label="排序依據"><option value="time" selected>依時間</option><option value="title">依標題</option></select>
+        <select id="sortOrder" aria-label="升冪或降冪"><option value="desc" selected>降冪</option><option value="asc">升冪</option></select>
+        <div class="switcher">
+          <button id="tabLibrary" class="tabbtn active" type="button">相簿</button>
+          <button id="tabTrash" class="tabbtn" type="button">回收桶 <span id="trashBadge" class="badge">0</span></button>
+        </div>
+        <button id="logoutBtn" class="btn secondary" type="button" style="justify-self:end">登出</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <!-- 未登入：登入/註冊卡片 -->
+      <section id="authSection" class="auth" aria-live="polite" style="display:grid;gap:12px;max-width:520px;margin:18px auto;padding:18px;background:var(--elev);border:1px solid var(--border);border-radius:16px">
+        <h2>登入你的相簿</h2>
+        <div class="field"><label for="email" style="color:var(--muted);font-size:13px">Email</label><input id="email" type="email" placeholder="you@example.com" autocomplete="username" /></div>
+        <div class="field"><label for="password" style="color:var(--muted);font-size:13px">密碼</label><input id="password" type="password" placeholder="至少 8 碼" autocomplete="current-password" /></div>
+        <div id="registerExtras" class="field" style="display:none"><label for="password2" style="color:var(--muted);font-size:13px">確認密碼</label><input id="password2" type="password" placeholder="再次輸入密碼" autocomplete="new-password" /></div>
+        <div id="authMsg" style="color:var(--muted)"></div>
+        <div id="lockHint" style="display:none;color:var(--muted)"></div>
+        <div class="actions" style="display:flex;gap:8px;align-items:center;justify-content:flex-end"><button id="toggleModeBtn" class="btn secondary" type="button">切換到註冊</button><button id="submitBtn" class="btn primary" type="button">登入</button></div>
+      </section>
+
+      <!-- 已登入：畫廊 -->
+      <section id="appSection" style="display:none">
+        <div class="statusbar" style="display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin-bottom:10px">
+          <div>目前使用者：<span id="currentUser" style="color:#22c55e">—</span></div>
+          <div>相片總數：<span id="countAll">0</span>｜顯示：<span id="countShown">0</span>／符合：<span id="countFiltered">0</span></div>
+          <div id="trashHint" style="display:none">回收桶的相片會在 <strong>7</strong> 天後自動清除。</div>
+        </div>
+        <div id="grid" class="grid" aria-live="polite"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+          <button id="emptyTrashBtn" class="btn danger" style="display:none" type="button">清空回收桶</button>
+          <button id="clearAllBtn" class="btn secondary" type="button">清空此帳號所有資料</button>
+        </div>
+      </section>
+
+      <!-- 訪客模式（?share=token） -->
+      <section id="visitorView" style="display:none">
+        <div class="statusbar"><span style="color:var(--muted)">訪客模式（唯讀）</span></div>
+        <div class="card"><div class="thumb"><img id="vImg" alt="shared"/></div><div class="meta"><div class="title-row"><div class="title" id="vTitle">—</div></div><div class="time" id="vMeta">—</div><div id="vDesc">—</div><div id="vTags" class="tags"></div><div><button id="btnVisitHome" class="btn secondary" type="button">回到主頁</button></div></div></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 編輯 Modal（簡版） -->
+  <div id="modalBackdrop" class="modal-backdrop">
+    <div class="modal" role="document" aria-labelledby="modalTitle">
+      <div class="modal__header" id="modalTitle">編輯圖片資訊</div>
+      <div class="modal__body">
+        <div class="field"><label class="muted" for="fTitle">標題</label><input id="fTitle" type="text" placeholder="例：台北小旅行"></div>
+        <div class="field"><label class="muted" for="fDesc">敘述</label><textarea id="fDesc" placeholder="簡短描述...（非必填）" style="min-height:90px"></textarea></div>
+        <div class="field"><label class="muted" for="fTags">標籤（逗號分隔）</label><input id="fTags" type="text" placeholder="旅遊, 朋友, 晚上"></div>
+      </div>
+      <div class="modal__footer"><button id="btnCancel" class="btn secondary" type="button">取消</button><button id="btnSave" class="btn primary" type="button">儲存</button></div>
+    </div>
+  </div>
+
+  <script>
+  // ============================
+  // Day 28：PWA（離線快取縮圖） + Day 27.5 全部功能
+  // ============================
+
+  // ---- Storage fallback
+  const MEM = new Map();
+  const HAS_LS = (function(){ try{ const k='__t__'+Math.random(); localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }catch(e){ return false; } })();
+  function sget(k){ if(HAS_LS){ try{ return localStorage.getItem(k);}catch(e){ return MEM.get(k)||null;} } return MEM.get(k)||null; }
+  function sset(k,v){ if(HAS_LS){ try{ localStorage.setItem(k,v); return true;}catch(e){ MEM.set(k,v); return true;} } MEM.set(k,v); return true; }
+
+  // ---- Keys & helpers
+  const LS_USERS = 'pa_users_v4';
+  const LS_SESSION = 'pa_session_user_v4';
+  const LS_SHARES_NS = 'pa_shares_v4';
+  const PWA_THUMB_CACHE = 'pa_thumbs_v1';
+  const PWA_APP_CACHE = 'pa_appshell_v1';
+  function userPhotosKey(email){ return 'pa_u_'+ encodeURIComponent(String(email).toLowerCase()) +'_photos_v4'; }
+  function normalizeEmail(s){ return String(s||'').trim().toLowerCase(); }
+  function now(){ return Date.now(); }
+  function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
+  function toHex(bytes){ return Array.prototype.map.call(bytes, b=>('0'+b.toString(16)).slice(-2)).join(''); }
+
+  // ---- SHA256（WebCrypto / 後備）
+  async function sha256HexWebCrypto(str){ const enc=new TextEncoder(); const data=enc.encode(str); const buf=await crypto.subtle.digest('SHA-256', data); return toHex(new Uint8Array(buf)); }
+  function sha256HexPortable(str){ function r(n,x){return (x>>>n)|(x<<(32-n));} function ch(x,y,z){return (x&y)^(~x&z);} function maj(x,y,z){return (x&y)^(x&z)^(y&z);} function S0(x){return r(2,x)^r(13,x)^r(22,x);} function S1(x){return r(6,x)^r(11,x)^r(25,x);} function s0(x){return r(7,x)^r(18,x)^(x>>>3);} function s1(x){return r(17,x)^r(19,x)^(x>>>10);} function utf8(s){var a=[];for(var i=0;i<s.length;i++){var c=s.charCodeAt(i);if(c<128)a.push(c);else if(c<2048)a.push(192|(c>>>6),128|(c&63));else if((c&0xFC00)===0xD800&&i+1<s.length&&(s.charCodeAt(i+1)&0xFC00)===0xDC00){var code=0x10000+((c&0x3FF)<<10)+(s.charCodeAt(++i)&0x3FF);a.push(240|(code>>>18),128|((code>>>12)&63),128|((code>>>6)&63),128|(code&63));}else a.push(224|(c>>>12),128|((c>>>6)&63),128|(c&63));}return a;}
+    var K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+    var b=utf8(str),l=b.length;b.push(0x80);while(b.length%64!==56)b.push(0);var hi=Math.floor(l/0x20000000),lo=(l<<3)>>>0;for(var i=0;i<4;i++)b.push((hi>>>((3-i)*8))&255);for(var i2=0;i2<4;i2++)b.push((lo>>>((3-i2)*8))&255);var H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19],w=new Array(64);
+    for(var j=0;j<b.length;j+=64){for(var t=0;t<16;t++){var i4=j+t*4;w[t]=((b[i4]<<24)|(b[i4+1]<<16)|(b[i4+2]<<8)|(b[i4+3]))>>>0;}for(var t2=16;t2<64;t2++)w[t2]=(s1(w[t2-2])+w[t2-7]+s0(w[t2-15])+w[t2-16])>>>0;var a=H[0],c=H[1],d=H[2],e=H[3],f=H[4],g=H[5],h=H[6],m=H[7];for(var t3=0;t3<64;t3++){var T1=(m+S1(f)+ch(f,g,h)+K[t3]+w[t3])>>>0;var T2=(S0(a)+maj(a,c,d))>>>0;m=h;h=g;g=f;f=(e+T1)>>>0;e=d;d=c;c=a;a=(T1+T2)>>>0;}H[0]=(H[0]+a)>>>0;H[1]=(H[1]+c)>>>0;H[2]=(H[2]+d)>>>0;H[3]=(H[3]+e)>>>0;H[4]=(H[4]+f)>>>0;H[5]=(H[5]+g)>>>0;H[6]=(H[6]+h)>>>0;H[7]=(H[7]+m)>>>0;}var out='';for(var k=0;k<8;k++)out+=('00000000'+H[k].toString(16)).slice(-8);return out; }
+  async function sha256Hex(s){ try{ if(crypto && crypto.subtle) return await sha256HexWebCrypto(s); }catch(e){} return sha256HexPortable(s); }
+  async function hashPassword(password, saltHex){ return sha256Hex(saltHex+':'+password); }
+
+  // ---- User & session & lockout
+  function loadUsers(){ const raw=sget(LS_USERS); if(!raw) return []; try{ const arr=JSON.parse(raw); return Array.isArray(arr)?arr:[]; }catch(e){ return []; } }
+  function saveUsers(list){ sset(LS_USERS, JSON.stringify(list)); }
+  function currentUserEmail(){ return normalizeEmail(sget(LS_SESSION)||''); }
+  function setSession(email){ sset(LS_SESSION, normalizeEmail(email||'')); }
+  function getLockMap(){ const raw=sget('pa_login_locks_v4'); if(!raw) return {}; try{ const obj=JSON.parse(raw); return obj&&typeof obj==='object'? obj:{} }catch(e){ return {}; } }
+  function setLockMap(map){ sset('pa_login_locks_v4', JSON.stringify(map||{})); }
+
+  async function register(email, password){
+    const e=normalizeEmail(email); const users=loadUsers();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) throw new Error('Email 格式不正確');
+    if((password||'').length<8) throw new Error('密碼需至少 8 碼');
+    if(users.some(u=>u.email===e)) throw new Error('此 Email 已被註冊');
+    let salt; try{ const a=new Uint8Array(16); crypto.getRandomValues(a); salt=toHex(a);}catch(_){ salt=toHex(Uint8Array.from({length:16},()=>Math.random()*256|0)); }
+    const hash=await hashPassword(password, salt);
+    const user={email:e, saltHex:salt, hashHex:hash, createdAt:now()}; users.push(user); saveUsers(users);
+    sset(userPhotosKey(e), JSON.stringify([])); // 建立空間
+    return user;
+  }
+  function checkLocked(email){ const map=getLockMap(); const rec=map[normalizeEmail(email)]; if(!rec) return {locked:false}; const until=rec.lockUntil||0; const left=until-now(); return {locked: left>0, leftMs: Math.max(0,left), count: rec.failCount||0}; }
+  function recordFail(email){ const map=getLockMap(); const e=normalizeEmail(email); const rec=map[e]||{failCount:0, lockUntil:0}; rec.failCount = (rec.failCount||0)+1; const baseDelay=500; rec.delayMs = baseDelay*rec.failCount; if(rec.failCount>=5){ rec.lockUntil = now() + 5*60*1000; } map[e]=rec; setLockMap(map); return rec; }
+  function recordSuccess(email){ const map=getLockMap(); delete map[normalizeEmail(email)]; setLockMap(map); }
+  async function login(email, password){
+    const e=normalizeEmail(email); const lk=checkLocked(e); if(lk.locked) throw new Error('帳號暫時鎖定，請稍後再試'); if(lk.count>0){ await new Promise(r=>setTimeout(r, (getLockMap()[e]?.delayMs)||0)); }
+    const users=loadUsers(); const u=users.find(x=>x.email===e); if(!u){ recordFail(e); throw new Error('查無此帳號'); }
+    const h=await hashPassword(password, u.saltHex); if(h!==u.hashHex){ const rec=recordFail(e); throw new Error(rec.failCount>=5? '嘗試次數過多，已暫時鎖定 5 分鐘':'密碼不正確'); }
+    recordSuccess(e); setSession(e); return u;
+  }
+  function logout(){ setSession(''); }
+
+  // ---- Photos per user
+  function loadPhotos(email){ const raw=sget(userPhotosKey(email)); if(!raw) return []; try{ const arr=JSON.parse(raw); return Array.isArray(arr)?arr:[]; }catch(e){ return []; } }
+  function savePhotos(email, list){ sset(userPhotosKey(email), JSON.stringify(list||[])); }
+
+  // ---- Shares（全域 token 表）
+  function loadShares(){ const raw=sget(LS_SHARES_NS); if(!raw) return {}; try{ const o=JSON.parse(raw); return o&&typeof o==='object'? o: {}; }catch(e){ return {}; } }
+  function saveShares(map){ sset(LS_SHARES_NS, JSON.stringify(map||{})); }
+  function getTokenByPhotoId(id){ const map=loadShares(); const owner=currentUserEmail(); for(const k in map){ if(Object.prototype.hasOwnProperty.call(map,k)){ const s=map[k]; if(s && s.snapshot && s.snapshot.id===id && s.owner===owner) return k; } } return null; }
+  function buildShareUrl(token){ const base=location.origin + location.pathname; return base + '?share=' + encodeURIComponent(token); }
+
+  // ---- Utils
+  function prettySize(bytes){ const u=['B','KB','MB','GB']; let i=0,n=bytes; while(n>=1024&&i<u.length-1){ n/=1024;i++; } return n.toFixed(1)+' '+u[i]; }
+  function fileNameWithoutExt(name){ if(typeof name!=='string') return 'image'; const i=name.lastIndexOf('.'); return i>0? name.slice(0,i): (name||'image'); }
+  function fmtFull(ts){ const d=new Date(ts||Date.now()); function P(n){return String(n).padStart(2,'0')} return d.getFullYear()+'-'+P(d.getMonth()+1)+'-'+P(d.getDate())+' '+P(d.getHours())+':'+P(d.getMinutes()); }
+
+  // ---- 縮圖與 Lazy + PWA thumbs cache
+  function loadImage(dataUrl){ return new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>resolve(img); img.onerror=()=>reject(new Error('影像載入失敗')); img.src=dataUrl; }); }
+  async function createThumb(dataUrl, maxSide=640, quality=0.7){ const img = await loadImage(dataUrl); let {width:w, height:h} = img; if(!w||!h) return dataUrl; const long = Math.max(w,h); if(long>maxSide){ const s=maxSide/long; w=Math.round(w*s); h=Math.round(h*s); } const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d'); ctx.drawImage(img,0,0,w,h); return c.toDataURL('image/jpeg', quality); }
+  async function putThumbIntoCache(id, dataUrl){ try{ const cache = await caches.open(PWA_THUMB_CACHE); const resp = await fetch(dataUrl); const blob = await resp.blob(); const url = new URL(location.origin + '/thumbs/' + encodeURIComponent(id) + '.jpg'); await cache.put(url, new Response(blob, { headers: { 'Content-Type': 'image/jpeg' } })); }catch(e){ /* 忽略快取失敗 */ } }
+  let io=null; const tiny='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+  function ensureObserver(){ if(io) io.disconnect(); io=new IntersectionObserver(entries=>{ entries.forEach(en=>{ if(en.isIntersecting){ const img=en.target; const src=img.getAttribute('data-src'); if(src){ img.src=src; img.removeAttribute('data-src'); } io.unobserve(img); } }); },{root:null,rootMargin:'200px',threshold:0.01}); }
+
+  // ---- UI refs
+  const authSection=document.getElementById('authSection');
+  const appSection=document.getElementById('appSection');
+  const visitorView=document.getElementById('visitorView');
+  const authedToolbar=document.getElementById('authedToolbar');
+  const currentUserSpan=document.getElementById('currentUser');
+  const emailInput=document.getElementById('email');
+  const passwordInput=document.getElementById('password');
+  const password2Input=document.getElementById('password2');
+  const registerExtras=document.getElementById('registerExtras');
+  const authMsg=document.getElementById('authMsg');
+  const lockHint=document.getElementById('lockHint');
+  const toggleModeBtn=document.getElementById('toggleModeBtn');
+  const submitBtn=document.getElementById('submitBtn');
+  const logoutBtn=document.getElementById('logoutBtn');
+  const searchInput=document.getElementById('searchInput');
+  const fileInput=document.getElementById('fileInput');
+  const sortBySelect=document.getElementById('sortBy');
+  const sortOrderSelect=document.getElementById('sortOrder');
+  const grid=document.getElementById('grid');
+  const countAll=document.getElementById('countAll');
+  const countFiltered=document.getElementById('countFiltered');
+  const countShown=document.getElementById('countShown');
+  const clearAllBtn=document.getElementById('clearAllBtn');
+  const tabLibrary=document.getElementById('tabLibrary');
+  const tabTrash=document.getElementById('tabTrash');
+  const trashBadge=document.getElementById('trashBadge');
+  const emptyTrashBtn=document.getElementById('emptyTrashBtn');
+  const trashHint=document.getElementById('trashHint');
+  const vImg=document.getElementById('vImg');
+  const vTitle=document.getElementById('vTitle');
+  const vMeta=document.getElementById('vMeta');
+  const vDesc=document.getElementById('vDesc');
+  const vTags=document.getElementById('vTags');
+  const btnVisitHome=document.getElementById('btnVisitHome');
+  const modalBackdrop=document.getElementById('modalBackdrop');
+  const fTitle=document.getElementById('fTitle');
+  const fDesc=document.getElementById('fDesc');
+  const fTags=document.getElementById('fTags');
+  const btnCancel=document.getElementById('btnCancel');
+  const btnSave=document.getElementById('btnSave');
+
+  // ---- App state
+  let mode='login';
+  let photos=[];    // 當前登入者照片（含 thumbUrl）
+  let query='';
+  let showTrash=false;
+  let editingId=null;
+  let visibleCount=12;
+
+  // ---- Search debounce
+  function debounce(fn, wait){ let t; return function(...args){ clearTimeout(t); t=setTimeout(()=>fn.apply(this,args), wait); }; }
+  const onSearchInput = debounce((e)=>{ query = e.target.value||''; visibleCount=12; render(); }, 300);
+
+  // ---- Visitor mode
+  function qp(name){ const u=new URL(location.href); return u.searchParams.get(name); }
+  function showVisitor(token){ const map=loadShares(); const rec=map[token]; if(!rec || !rec.snapshot){ authSection.style.display='none'; authedToolbar.style.display='none'; appSection.style.display='none'; visitorView.style.display='block'; visitorView.innerHTML='<div class="card" style="padding:20px">連結已失效或不存在。</div>'; return; } const p=rec.snapshot; authSection.style.display='none'; authedToolbar.style.display='none'; appSection.style.display='none'; visitorView.style.display='block'; vImg.src=p.dataUrl; vTitle.textContent=p.title||fileNameWithoutExt(p.name); vMeta.textContent='時間：'+fmtFull(p.lastModified)+'｜'+prettySize(p.size||0); vDesc.textContent=p.desc||'—'; vTags.innerHTML=''; (p.tags||[]).forEach(t=>{ const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; vTags.appendChild(chip); }); }
+
+  // ---- Modal
+  function openEditor(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(p.isDeleted) return alert('回收桶中的項目不能編輯，請先還原'); editingId=id; fTitle.value=p.title||fileNameWithoutExt(p.name); fDesc.value=p.desc||''; fTags.value=(p.tags||[]).join(', '); showModal(true); setTimeout(()=>fTitle.focus(),0); }
+  function showModal(show){ modalBackdrop.style.display = show? 'flex':'none'; modalBackdrop.setAttribute('aria-hidden', show? 'false': 'true'); if(!show) editingId=null; }
+  function saveEditor(){ const p=photos.find(x=>x.id===editingId); if(!p) return; p.title=String(fTitle.value||'').trim(); p.desc=String(fDesc.value||'').trim(); p.tags=String(fTags.value||'').split(',').map(s=>s.trim()).filter(Boolean); persist(); render(); showModal(false); }
+
+  btnCancel.addEventListener('click',()=>showModal(false));
+  btnSave.addEventListener('click',saveEditor);
+  modalBackdrop.addEventListener('click',ev=>{ if(ev.target===modalBackdrop) showModal(false); });
+  document.addEventListener('keydown',ev=>{ if(modalBackdrop.style.display==='flex' && ev.key==='Escape') showModal(false); });
+
+  // ---- Upload
+  function readFileAsDataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('讀檔失敗'));r.onload=()=>resolve(r.result);r.readAsDataURL(file)})}
+  const handleUpload = async (e)=>{ const files=Array.from(e.target.files||[]); if(!files.length) return; const images=files.filter(f=>f.type&&f.type.startsWith('image/')); const non=files.filter(f=>!f.type||!f.type.startsWith('image/')); if(non.length) alert('已略過非圖片檔案:\n'+non.map(f=>'• '+f.name).join('\n')); for(const file of images){ try{ const dataUrl=await readFileAsDataURL(file); const thumbUrl=await createThumb(dataUrl, 640, 0.7); const item={ id:uid(), dataUrl:String(dataUrl), thumbUrl:String(thumbUrl), name:file.name, lastModified:file.lastModified, size:file.size, title:fileNameWithoutExt(file.name), desc:'', tags:[], isDeleted:false, deletedAt:null }; photos.push(item); // 放進縮圖快取（以 /thumbs/<id>.jpg 供離線）
+          putThumbIntoCache(item.id, item.thumbUrl); }catch(err){ console.warn('轉換縮圖失敗：', err); } } persist(); e.target.value=''; render(); };
+
+  // ---- Trash
+  const DAYS_KEEP=7, MS_DAY=24*60*60*1000;
+  function moveToTrash(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(p.isDeleted) return; p.isDeleted=true; p.deletedAt=now(); persist(); render(); }
+  function restorePhoto(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(!p.isDeleted) return; p.isDeleted=false; p.deletedAt=null; persist(); render(); }
+  function permanentlyDelete(id){ const idx=photos.findIndex(x=>x.id===id); if(idx<0) return; if(confirm('此動作無法還原，確定永久刪除？')){ photos.splice(idx,1); persist(); render(); } }
+  function emptyTrash(){ if(!photos.some(p=>p.isDeleted)) return alert('回收桶目前是空的'); if(!confirm('將永久刪除回收桶內所有項目，無法復原。要繼續嗎？')) return; photos = photos.filter(p=>!p.isDeleted); persist(); render(); }
+  function autoPurge(){ const limit=now()-DAYS_KEEP*MS_DAY; const before=photos.length; photos=photos.filter(p=>!(p.isDeleted&&typeof p.deletedAt==='number'&&p.deletedAt<limit)); if(photos.length!==before) persist(); }
+
+  // ---- Filter & sort & render
+  function baseFilter(list){ const q=(query||'').trim().toLowerCase(); const tokens=q? q.split(/\s+/).filter(Boolean):[]; return list.filter(p=>{ const inTrash=!!p.isDeleted; if(showTrash? !inTrash : inTrash) return false; if(!tokens.length) return true; const hay=[p.title||'', p.desc||'', (p.tags||[]).join(' '), p.name||''].join(' ').toLowerCase(); return tokens.every(tok=>hay.includes(tok)); }); }
+  function sortPhotos(list){ const arr=list.slice(); const order = (document.getElementById('sortOrder').value==='asc')?1:-1; const sortBy = document.getElementById('sortBy').value; if(sortBy==='time'){ arr.sort((a,b)=>{const t1=Number(a.lastModified||0),t2=Number(b.lastModified||0);return (t1===t2?0:(t1>t2?1:-1))*order}); } else { arr.sort((a,b)=>{const s1=(a.title||fileNameWithoutExt(a.name)).toLowerCase(); const s2=(b.title||fileNameWithoutExt(b.name)).toLowerCase(); if(s1===s2) return 0; return (s1>s2?1:-1)*order}); } return arr; }
+  function getFilteredSorted(){ return sortPhotos(baseFilter(photos)); }
+  function updateCounters(){ const totalAll=photos.filter(p=>!p.isDeleted).length; const totalShown=getFilteredSorted().length; const shown=Math.min(visibleCount,totalShown); countAll.textContent=String(totalAll); countFiltered.textContent=String(totalShown); countShown.textContent=String(shown); const trashCount=photos.filter(p=>p.isDeleted).length; trashBadge.textContent=String(trashCount); trashHint.style.display=showTrash?'inline':'none'; }
+  function render(){ ensureObserver(); const all=getFilteredSorted(); const data=all.slice(0, visibleCount); updateCounters(); const frag=document.createDocumentFragment(); if(data.length===0){ const empty=document.createElement('div'); empty.className='empty'; empty.textContent= showTrash? '回收桶是空的。' : (photos.filter(p=>!p.isDeleted).length===0 ? '還沒有相片，請從上方上傳。' : '沒有符合目前搜尋條件的結果。'); frag.appendChild(empty); } else { data.forEach(p=>{ const card=document.createElement('article'); card.className='card'; card.dataset.id=p.id; const th=document.createElement('div'); th.className='thumb'; const img=document.createElement('img'); img.loading='lazy'; img.src=tiny; // 透過 /thumbs/<id>.jpg 供 SW 快取離線
+        const thumbPath = '/thumbs/'+encodeURIComponent(p.id)+'.jpg'; img.setAttribute('data-src', thumbPath); img.alt=p.title||p.name; io.observe(img); th.appendChild(img); const meta=document.createElement('div'); meta.className='meta'; const titleRow=document.createElement('div'); titleRow.className='title-row'; const title=document.createElement('div'); title.className='title'; title.textContent=p.title||fileNameWithoutExt(p.name); const btnRow=document.createElement('div'); btnRow.className='actions'; if(showTrash){ const restoreBtn=document.createElement('button'); restoreBtn.className='btn small'; restoreBtn.type='button'; restoreBtn.textContent='還原'; restoreBtn.addEventListener('click',()=>restorePhoto(p.id)); const delBtn=document.createElement('button'); delBtn.className='btn small danger'; delBtn.type='button'; delBtn.textContent='永久刪除'; delBtn.addEventListener('click',()=>permanentlyDelete(p.id)); btnRow.appendChild(restoreBtn); btnRow.appendChild(delBtn);} else { const editBtn=document.createElement('button'); editBtn.className='btn small'; editBtn.type='button'; editBtn.textContent='編輯'; editBtn.addEventListener('click',()=>openEditor(p.id)); const viewBtn=document.createElement('button'); viewBtn.className='btn small secondary'; viewBtn.type='button'; viewBtn.textContent='看原圖'; viewBtn.addEventListener('click',()=>showOriginal(p)); const shareBtn=document.createElement('button'); shareBtn.className='btn small primary'; shareBtn.type='button'; shareBtn.textContent='分享'; shareBtn.addEventListener('click',()=>sharePhoto(p.id)); const copyBtn=document.createElement('button'); copyBtn.className='btn small secondary'; copyBtn.type='button'; copyBtn.textContent='複製連結'; copyBtn.addEventListener('click',()=>copyShareLink(p.id)); const trashBtn=document.createElement('button'); trashBtn.className='btn small danger'; trashBtn.type='button'; trashBtn.textContent='刪除'; trashBtn.addEventListener('click',()=>moveToTrash(p.id)); btnRow.appendChild(editBtn); btnRow.appendChild(viewBtn); btnRow.appendChild(shareBtn); btnRow.appendChild(copyBtn); btnRow.appendChild(trashBtn); }
+        titleRow.appendChild(title); titleRow.appendChild(btnRow); const time=document.createElement('div'); time.className='time'; time.textContent='時間：'+fmtFull(p.lastModified)+'｜'+prettySize(p.size||0); const tagsWrap=document.createElement('div'); tagsWrap.className='tags'; (p.tags||[]).forEach(t=>{ const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; tagsWrap.appendChild(chip); }); const shareLine=document.createElement('div'); shareLine.className='time'; const token=getTokenByPhotoId(p.id); if(token){ const a=document.createElement('a'); a.href=buildShareUrl(token); a.textContent='已分享：'+a.href; a.target='_blank'; shareLine.appendChild(a); } else { shareLine.textContent='尚未分享'; } meta.appendChild(titleRow); meta.appendChild(time); meta.appendChild(tagsWrap); meta.appendChild(shareLine); card.appendChild(th); card.appendChild(meta); frag.appendChild(card); }); }
+    grid.innerHTML=''; grid.appendChild(frag); emptyTrashBtn.style.display = showTrash? 'inline-flex':'none'; }
+
+  function showOriginal(p){ const w=window.open(); if(!w){ alert('彈出視窗被阻擋，請允許後再試'); return; } const html = `<!DOCTYPE html><title>${(p.title||fileNameWithoutExt(p.name))} - 原圖</title><style>html,body{margin:0;height:100%;background:#111;display:grid;place-items:center}</style><img src="${p.dataUrl}" alt="original" style="max-width:100%;max-height:100%"/>`; w.document.write(html); }
+
+  // ---- 分享
+  function sharePhoto(id){ const p=photos.find(x=>x.id===id); if(!p) return; let token=getTokenByPhotoId(id); const map=loadShares(); if(!token){ token='sh_'+uid(); const snap={ id:p.id, dataUrl:p.dataUrl, name:p.name, lastModified:p.lastModified, size:p.size, title:p.title, desc:p.desc, tags:Array.isArray(p.tags)? p.tags.slice():[] }; map[token]={ owner: currentUserEmail(), createdAt: now(), snapshot: snap }; saveShares(map); } const url=buildShareUrl(token); const ok=confirm('已產生分享連結：\n\n'+url+'\n\n是否複製到剪貼簿？'); if(ok){ copyText(url); alert('已複製分享連結'); } render(); }
+  function copyShareLink(id){ const token=getTokenByPhotoId(id); if(!token){ alert('尚未分享，請先點「分享」產生連結'); return; } const url=buildShareUrl(token); copyText(url); alert('已複製分享連結'); }
+  function copyText(text){ if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); } else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); }catch(e){} ta.remove(); } }
+
+  // ---- Controls
+  function setTab(trash){ showTrash=!!trash; tabLibrary.classList.toggle('active', !showTrash); tabTrash.classList.toggle('active', showTrash); visibleCount=12; render(); }
+  tabLibrary.addEventListener('click', ()=>setTab(false));
+  tabTrash.addEventListener('click', ()=>setTab(true));
+  emptyTrashBtn.addEventListener('click', emptyTrash);
+  clearAllBtn.addEventListener('click', ()=>{ if(!photos.length) return; if(confirm('將刪除此帳號所有相片（含回收桶），無法復原。是否繼續？')){ photos=[]; persist(); render(); }});
+  searchInput.addEventListener('input', onSearchInput);
+  sortBySelect.addEventListener('change', ()=>{ visibleCount=12; render(); });
+  sortOrderSelect.addEventListener('change', ()=>{ visibleCount=12; render(); });
+  fileInput.addEventListener('change', handleUpload);
+
+  // ---- Auth UI
+  function setMode(m){ mode=m; if(m==='register'){ registerExtras.style.display='block'; toggleModeBtn.textContent='切換到登入'; submitBtn.textContent='註冊'; authMsg.textContent=''; authMsg.style.color='var(--muted)'; } else { registerExtras.style.display='none'; toggleModeBtn.textContent='切換到註冊'; submitBtn.textContent='登入'; authMsg.textContent=''; authMsg.style.color='var(--muted)'; } }
+  toggleModeBtn.addEventListener('click', ()=> setMode(mode==='login'? 'register':'login'));
+  submitBtn.addEventListener('click', async ()=>{
+    const email=emailInput.value||''; const pass=passwordInput.value||''; const pass2=password2Input.value||'';
+    try{
+      const lock=checkLocked(email); if(lock.locked){ const s=Math.ceil((lock.leftMs||0)/1000); lockHint.style.display='block'; lockHint.textContent='此帳號已鎖定，請 '+s+' 秒後再試'; throw new Error('帳號暫時鎖定'); } else { lockHint.style.display='none'; }
+      if(mode==='register'){
+        if(pass!==pass2) throw new Error('兩次輸入的密碼不一致');
+        const u=await register(email, pass);
+        authMsg.textContent='註冊成功，請登入'; authMsg.style.color='#22c55e'; setMode('login'); emailInput.value=u.email; passwordInput.value=''; password2Input.value='';
+      } else {
+        const u=await login(email, pass);
+        emailInput.value=''; passwordInput.value=''; password2Input.value=''; onAuthed(u.email);
+      }
+    }catch(err){ authMsg.textContent=err.message||String(err); authMsg.style.color='#f43f5e'; }
+  });
+  logoutBtn.addEventListener('click', ()=>{ logout(); photos=[]; query=''; showAuthed(false); authMsg.textContent='已登出'; authMsg.style.color='var(--muted)'; });
+  function showAuthed(is){ authSection.style.display=is? 'none':'grid'; authedToolbar.style.display=is? 'grid':'none'; appSection.style.display=is? 'block':'none'; }
+  function onAuthed(email){ showAuthed(true); currentUserSpan.textContent=email; photos=loadPhotos(email); let patched=false; photos.forEach(p=>{ if(!('thumbUrl' in p)){ p.thumbUrl=null; patched=true } if(!('isDeleted' in p)){ p.isDeleted=false; patched=true } if(!('deletedAt' in p)){ p.deletedAt=null; patched=true } }); if(patched) persist(); // 升級舊資料
+    // 將現有縮圖塞進 PWA 快取（可離線）
+    (async ()=>{ for(const p of photos){ if(p.thumbUrl && !p.isDeleted){ await putThumbIntoCache(p.id, p.thumbUrl); } } })();
+    // 補少量縮圖避免首登卡頓
+    ;(async ()=>{ const need=photos.filter(p=>!p.thumbUrl && !p.isDeleted).slice(0,5); let mod=false; for(const p of need){ try{ p.thumbUrl=await createThumb(p.dataUrl,640,0.7); await putThumbIntoCache(p.id, p.thumbUrl); mod=true; }catch(_){} } if(mod) persist(); render(); })();
+    autoPurge(); visibleCount=12; render(); }
+  function persist(){ const email=currentUserEmail(); if(!email) return; savePhotos(email, photos); }
+
+  // ---- Visitor Home Btn
+  btnVisitHome.addEventListener('click', ()=>{ const base=location.origin+location.pathname; location.href=base; });
+
+  // ---- Self-tests（針對 PWA 快取與 Debounce/縮圖）
+  async function runSelfTests(){
+    console.groupCollapsed('🔎 Self-tests for Day 28');
+    try{
+      // Debounce 只觸發一次
+      let calls=0; const fn=debounce(()=>{calls++}, 100); fn(); fn(); fn(); await new Promise(r=>setTimeout(r, 220)); console.assert(calls===1, 'Debounce 應只觸發 1 次');
+      // 縮圖長邊限制
+      const c=document.createElement('canvas'); c.width=800; c.height=400; c.getContext('2d').fillRect(0,0,800,400); const raw=c.toDataURL('image/png'); const th=await createThumb(raw, 320, 0.7); const img=await loadImage(th); console.assert(Math.max(img.width,img.height)<=320, '縮圖長邊應 <= 320');
+      // PWA 縮圖快取寫入
+      await putThumbIntoCache('test-id', th); const cache=await caches.open(PWA_THUMB_CACHE); const res=await cache.match(location.origin+'/thumbs/test-id.jpg'); console.assert(!!res, '縮圖應被寫入 CacheStorage');
+      console.log('✅ 自我測試通過');
+    }catch(err){ console.error('❌ 自我測試失敗', err); }
+    console.groupEnd();
+  }
+
+  // ---- Service Worker 內容（以 <script type="text/plain"> 內嵌，動態註冊）
+  const SW_CODE = `
+  const APP_CACHE = '${PWA_APP_CACHE}';
+  const THUMB_CACHE = '${PWA_THUMB_CACHE}';
+  self.addEventListener('install', (e)=>{
+    self.skipWaiting();
+    e.waitUntil((async()=>{
+      try{
+        const cache = await caches.open(APP_CACHE);
+        // 嘗試快取 shell：以目前 scope 根路徑（index.html）
+        const root = new URL('./', self.registration.scope).href;
+        await cache.addAll([ root ]);
+      }catch(_){ /* 忽略 */ }
+    })());
+  });
+  self.addEventListener('activate', (e)=>{ e.waitUntil((async()=>{ try{ const keys=await caches.keys(); for(const k of keys){ if(k!==APP_CACHE && k!==THUMB_CACHE){ await caches.delete(k); } } }catch(_){ } await self.clients.claim(); })()); });
+  self.addEventListener('fetch', (event)=>{
+    const url = new URL(event.request.url);
+    // 只攔截 /thumbs/<id>.jpg 作離線快取
+    if(url.pathname.startsWith('/thumbs/')){
+      event.respondWith((async()=>{
+        const cache = await caches.open(THUMB_CACHE);
+        const cached = await cache.match(event.request);
+        if(cached) return cached;
+        // 如果沒快取，回傳 404（前端會用 data URL 後援）
+        return new Response('Not cached', { status: 404 });
+      })());
+      return;
+    }
+    // App shell：cache-first
+    event.respondWith((async()=>{
+      const cache = await caches.open(APP_CACHE);
+      const cached = await cache.match(event.request);
+      if(cached) return cached;
+      try{
+        const resp = await fetch(event.request);
+        // 只快取 GET 且同源的請求，避免把外部資源弄髒
+        if(event.request.method==='GET' && url.origin===location.origin){ cache.put(event.request, resp.clone()); }
+        return resp;
+      }catch(_){ return cached || new Response('Offline', {status: 503}); }
+    })());
+  });`;
+
+  async function registerSW(){
+    if(!('serviceWorker' in navigator)) return;
+    // 注意：規範要求 SW 來源需為 http(s)，blob: 可能無法註冊；我們仍嘗試，若失敗則顯示提示。
+    try{
+      const blob = new Blob([SW_CODE], {type:'text/javascript'});
+      const swUrl = URL.createObjectURL(blob);
+      const reg = await navigator.serviceWorker.register(swUrl, { scope: './' });
+      console.log('SW 註冊完成：', reg.scope);
+      document.getElementById('pwaBanner').textContent = 'PWA 已啟用（若要完整安裝，請在支援的瀏覽器以 http/https 服務此檔）。';
+    }catch(err){
+      console.warn('SW 註冊失敗：', err);
+      document.getElementById('pwaBanner').innerHTML = '⚠️ 無法註冊 Service Worker。請以 <strong>http://localhost</strong> 或 HTTPS 方式提供本檔。';
+    }
+  }
+
+  // ---- Init
+  (function init(){
+    const share=qp('share'); if(share){ showVisitor(share); registerSW(); return; }
+    setMode('login');
+    const authed=currentUserEmail(); if(authed){ onAuthed(authed); }
+    // 嘗試註冊 SW（若在不支援的環境會自動顯示提示）
+    registerSW();
+    runSelfTests();
+  })();
+  </script>
+</body>
+</html>

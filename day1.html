@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Day 1｜線上相簿 - 專案初始化</title>
+  
+  <style>
+    /* ====== 基本主題（可日後在 Day 20 做主題切換） ====== */
+    :root {
+      --bg: #ffffff;
+      --text: #2b2b2b;
+      --muted: #6b6b6b;
+      --primary: #ff8c42;      /* 主色 */
+      --accent: #ffb16e;       /* 點綴色 */
+      --border: #e6e6e6;
+      --card: #fafafa;
+    }
+
+    /* ====== 版面 ====== */
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft JhengHei", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1200px;           /* 桌機：主要內容寬度 */
+      margin: 0 auto;
+      padding: 24px;               /* 內距，讓畫面不貼邊 */
+      box-sizing: border-box;
+    }
+
+    /* ====== 頁首 ====== */
+    header.site-header {
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #fff, #fff6f0);
+    }
+    .brand {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand__logo {
+      width: 40px; height: 40px; border-radius: 10px; background: var(--primary);
+      display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700;
+    }
+    .brand__title { margin: 0; font-size: 22px; }
+    .brand__subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+    /* ====== 工具列（今天僅擺放界面，尚未啟用功能） ====== */
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 240px 160px 160px; /* 搜尋 / 上傳 / 分類 / 排序 */
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .toolbar input[type="text"],
+    .toolbar select,
+    .toolbar input[type="file"],
+    .toolbar button {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .toolbar button {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+
+    /* ====== 內容區：相簿卡片網格（今天僅放空狀態） ====== */
+    main.gallery {
+      margin-top: 20px;
+      min-height: 420px; /* 留空間讓今天的空狀態看起來穩定 */
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr); /* 桌機固定 4 欄；如果螢幕稍窄，瀏覽器會自動擠壓 */
+      gap: 16px;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--card);
+      aspect-ratio: 4 / 3; /* 先保留比例，Day 3 會放入縮圖 */
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* 空狀態 */
+    .empty {
+      border: 2px dashed var(--border);
+      background: #fff;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 8px; padding: 24px;
+      text-align: center;
+    }
+    .empty b { color: var(--primary); }
+
+    /* ====== 頁尾 ====== */
+    footer.site-footer {
+      margin-top: 32px;
+      padding: 16px 0 32px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- ====== 頁首：品牌 + 說明 ====== -->
+  <header class="site-header">
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 1）</h1>
+          <p class="brand__subtitle">專案初始化｜建立頁面骨架與檔案結構</p>
+        </div>
+      </div>
+
+      <!-- ====== 工具列（今天僅排版，不做功能） ====== -->
+      <div class="toolbar" role="region" aria-label="工具列（示意）">
+        <input type="text" placeholder="搜尋：標題 / 描述 / 標籤（Day 6 啟用）" disabled>
+        <input type="file" multiple title="Day 3 會啟用" disabled>
+        <select disabled>
+          <option selected>分類（Day 7 啟用）</option>
+        </select>
+        <select disabled>
+          <option selected>排序（Day 8 啟用）</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====== 內容：相簿網格（今天顯示空狀態） ====== -->
+  <main class="gallery">
+    <div class="container">
+      <div class="grid">
+        <!-- 今天先顯示空卡片，確認版型。Day 3 會以 JS 動態插入卡片。-->
+        <div class="card empty">
+          <div>
+            <div>這裡會顯示你的照片</div>
+            <div>Day 3 之後，選擇圖片即可預覽</div>
+            <div><b>現在先確認版型無誤</b></div>
+          </div>
+        </div>
+        <div class="card empty"><div>空卡片</div></div>
+        <div class="card empty"><div>空卡片</div></div>
+        <div class="card empty"><div>空卡片</div></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ====== 頁尾 ====== -->
+  <footer class="site-footer">
+    <div class="container">
+      Day 1 完成：頁首 / 工具列 / 內容 / 頁尾骨架。明天（Day 2）會做出 4 欄卡片網格的細節樣式。
+    </div>
+  </footer>
+
+  <script>
+    // ============================
+    // Day 1：初始化腳本（示意）
+    // ============================
+    (function initDay1() {
+      console.log(" Day 1 初始化完成：目前僅有排版骨架，功能將在 Day 2+ 逐日開啟。");
+
+      
+    })();
+  </script>
+</body>
+</html>
+
+
+
+

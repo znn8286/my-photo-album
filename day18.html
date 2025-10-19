@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day 18｜線上相簿 - 相簿封面（可指定封面供相簿列表顯示）</title>
+  <!--
+    使用方式：
+    1) 單一 HTML 檔，存成 index.html 直接打開即可。
+    2) 今日目標：
+       - 新增「相簿列表」分頁（以「分類」視為相簿）。
+       - 在相簿列表顯示每個分類的「封面縮圖」與張數。
+       - 在相片卡片上新增「設為封面」按鈕，用以指定該分類的封面（持久化）。
+       - 若尚未指定封面，預設使用「該分類中最新一張」作為封面。
+    3) 承接 Day 10～17：RWD、搜尋、分類、排序/拖曳、自我測試、回收桶。
+  -->
+  <style>
+    :root { --bg:#fff; --text:#1f2328; --muted:#6b7280; --primary:#ff8c42; --danger:#e11d48; --border:#e5e7eb; --card:#f9fafb; --shadow:rgba(0,0,0,.06); --overlay:rgba(0,0,0,.5); --focus:#2563eb; --radius:12px; --container:1200px; }
+    @media (prefers-color-scheme: dark){ :root { --bg:#0b1220; --text:#e5e7eb; --muted:#94a3b8; --primary:#ff954f; --danger:#fb7185; --border:#1f2937; --card:#0f172a; --shadow:rgba(0,0,0,.4); --overlay:rgba(0,0,0,.6); --focus:#60a5fa; } }
+
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans CJK TC","Microsoft JhengHei",Arial,sans-serif;line-height:1.65}
+    .container{max-width:var(--container);margin:0 auto;padding:24px;box-sizing:border-box}
+
+    header.site-header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fff7f1)}
+    @media(prefers-color-scheme:dark){header.site-header{background:linear-gradient(180deg,#0b1220,#0b1220)}}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand__logo{width:44px;height:44px;border-radius:10px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    .brand__title{margin:0;font-size:20px}
+    .brand__subtitle{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+    .toolbar{display:grid;gap:12px;margin-top:16px;align-items:center;grid-template-columns:1fr 220px 150px 150px 150px 130px 140px}
+    @media(max-width:990px){.toolbar{grid-template-columns:1fr 1fr 1fr}}
+    @media(max-width:640px){.toolbar{grid-template-columns:1fr}}
+    .toolbar input[type=text],.toolbar select,.toolbar button{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--text)}
+    .toolbar input[type=file]{padding:8px;border:1px solid var(--border);border-radius:10px;background:#fff}
+    .toolbar .btn{background:var(--primary);color:#fff;border:none;cursor:pointer;border-radius:10px;padding:10px 12px;font-weight:600}
+    .toolbar .btn.secondary{background:#fff0;color:var(--text);border:1px solid var(--border)}
+
+    .switcher{display:flex;gap:8px;align-items:center}
+    .switcher .tabbtn{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;cursor:pointer}
+    .switcher .tabbtn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:0 6px;border-radius:999px;background:var(--border);color:var(--muted);font-size:12px;margin-left:6px}
+
+    main.gallery{margin-top:18px}
+    .grid{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+    @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:990px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 2px 8px var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition: box-shadow .15s ease}
+    .thumb{aspect-ratio:4/3;background:#eef2f7;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .meta{padding:12px;display:grid;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .time{font-size:12px;color:var(--muted)}
+    .tags{display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:#555;background:#fff}
+    .actions{display:flex;gap:8px}
+    .btn.small{padding:8px 10px;font-size:12px;border-radius:8px}
+    .btn.danger{background:var(--danger);color:#fff;border:none}
+    .btn.cover{background:#fff;color:var(--primary);border:1px solid var(--primary)}
+    .cover-ind{font-size:11px;color:var(--primary);font-weight:700;border:1px solid var(--primary);padding:2px 6px;border-radius:999px}
+
+    /* 相簿列表（每個分類一張卡） */
+    .album-title{font-weight:800}
+    .album-meta{font-size:12px;color:var(--muted)}
+
+    .statusbar{display:flex;align-items:center;justify-content:space-between;margin:8px 0 12px;color:var(--muted);font-size:13px}
+    .empty{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;color:var(--muted);display:flex;align-items:center;justify-content:center;grid-column:1/-1;background:#fff0}
+
+    .pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px}
+    .pager .btn{background:var(--primary);color:#fff;border:none;border-radius:12px;padding:12px 18px;cursor:pointer;font-weight:700}
+    .pager .btn[disabled]{opacity:.55;cursor:not-allowed}
+    .pager .hint{color:var(--muted);font-size:13px}
+
+    .modal-backdrop{position:fixed;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+    .modal{width:560px;max-width:720px;background:var(--bg);border-radius:var(--radius);border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden}
+    .modal__header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800}
+    .modal__body{padding:16px;display:grid;gap:12px}
+    .modal__footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+    .field{display:grid;gap:6px}
+    .field label{font-size:13px;color:var(--muted)}
+    .field input[type=text],.field textarea,.field select{width:100%;box-sizing:border-box;padding:12px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--text)}
+    .field textarea{resize:vertical;min-height:90px}
+    .btn.secondary{background:#fff0;border:1px solid var(--border);color:var(--text)}
+    .btn.primary{background:var(--primary);color:#fff;border:none}
+  </style>
+  <!-- exif-js（延續 Day 15；載不到也不影響今天功能） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js" integrity="sha512-sSWq7J7V7x1Gk2YgG9XgVQwO4TtF2v3m7zq2jv1Wn0fS9zF+v4uE7wUuJ7c3OeJqf8i9mnnm2n6O1i8wCw3Wiw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 18）</h1>
+          <p class="brand__subtitle">相簿封面：指定分類封面，並有相簿列表視圖</p>
+        </div>
+      </div>
+
+      <div class="toolbar" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）" aria-label="搜尋">
+        <input id="fileInput" type="file" accept="image/*" multiple aria-label="上傳圖片">
+        <select id="categorySelect" aria-label="分類"></select>
+        <select id="sortBy" aria-label="排序依據">
+          <option value="time" selected>依時間</option>
+          <option value="title">依標題</option>
+          <option value="custom">自訂（拖曳）</option>
+        </select>
+        <select id="sortOrder" aria-label="升冪或降冪">
+          <option value="desc" selected>降冪</option>
+          <option value="asc">升冪</option>
+        </select>
+        <select id="pageSize" aria-label="每頁筆數">
+          <option value="8">每頁 8 張</option>
+          <option value="12" selected>每頁 12 張</option>
+          <option value="16">每頁 16 張</option>
+          <option value="24">每頁 24 張</option>
+        </select>
+        <div class="switcher" style="grid-column: 1 / -1;">
+          <button id="tabLibrary" class="tabbtn active" type="button">相簿</button>
+          <button id="tabAlbums" class="tabbtn" type="button">相簿列表</button>
+          <button id="tabTrash" class="tabbtn" type="button">回收桶 <span id="trashBadge" class="badge">0</span></button>
+        </div>
+        <div style="grid-column: 1 / -1; font-size:13px; color:var(--muted);">
+          提示：在相片卡片按「設為封面」可指定目前分類的相簿封面。相簿列表會顯示各分類封面與張數。
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="gallery">
+    <div class="container">
+      <div class="statusbar" aria-live="polite">
+        <div><span id="countAll">0</span> 張照片</div>
+        <div>已顯示：<span id="countShown">0</span>／符合：<span id="countFiltered">0</span> 張</div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px;">
+        <button id="emptyTrashBtn" class="btn danger small" type="button" title="永久清空回收桶" style="display:none;">清空回收桶</button>
+        <button id="clearBtn" class="btn secondary small" type="button" title="清空全部資料">清空全部（含回收桶 & 封面）</button>
+      </div>
+      <div id="grid" class="grid" aria-live="polite"></div>
+      <div class="pager" id="pager" style="display:flex;">
+        <button id="loadMoreBtn" class="btn" type="button">載入更多</button>
+        <span class="hint" id="pagerHint"></span>
+      </div>
+    </div>
+  </main>
+
+  <!-- ====== Modal：編輯圖片中繼資料 ====== -->
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal" role="document" aria-labelledby="modalTitle">
+      <div class="modal__header" id="modalTitle">編輯圖片資訊</div>
+      <div class="modal__body">
+        <div class="field">
+          <label for="fTitle">標題</label>
+          <input id="fTitle" type="text" placeholder="例：台北小旅行" />
+        </div>
+        <div class="field">
+          <label for="fDesc">敘述</label>
+          <textarea id="fDesc" placeholder="簡短描述這張照片...（非必填）"></textarea>
+        </div>
+        <div class="field">
+          <label for="fTags">標籤（以逗號 , 分隔）</label>
+          <input id="fTags" type="text" placeholder="例：旅遊, 朋友, 晚上" />
+        </div>
+        <div class="field">
+          <label for="fCategory">分類</label>
+          <input id="fCategory" list="catList" type="text" placeholder="例：旅遊 / 生活 / 寵物" />
+          <datalist id="catList"></datalist>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button id="btnCancel" class="btn secondary" type="button">取消</button>
+        <button id="btnSave" class="btn primary" type="button">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container" style="border-top:1px solid var(--border); margin-top:24px; padding-top:16px; color:var(--muted); font-size:13px; text-align:center;">
+      Day 18 完成：相簿封面（指定分類封面 + 相簿列表）。
+    </div>
+  </footer>
+
+  <script>
+    // ============================
+    // Day 18：相簿封面（可指定封面供相簿列表顯示）
+    // ============================
+
+    const LS_KEY = 'pa_photos_v1';
+    const LS_COVERS = 'pa_album_covers_v1'; // { [categoryName]: photoId }
+
+    // 工具列
+    const fileInput = document.getElementById('fileInput');
+    const searchInput = document.getElementById('searchInput');
+    const categorySelect = document.getElementById('categorySelect');
+    const sortBySelect = document.getElementById('sortBy');
+    const sortOrderSelect = document.getElementById('sortOrder');
+    const pageSizeSelect = document.getElementById('pageSize');
+
+    // 分頁/顯示
+    const grid = document.getElementById('grid');
+    const pager = document.getElementById('pager');
+    const clearBtn = document.getElementById('clearBtn');
+    const loadMoreBtn = document.getElementById('loadMoreBtn');
+    const pagerHint = document.getElementById('pagerHint');
+
+    const countAll = document.getElementById('countAll');
+    const countFiltered = document.getElementById('countFiltered');
+    const countShown = document.getElementById('countShown');
+
+    // 視圖切換
+    const tabLibrary = document.getElementById('tabLibrary');
+    const tabAlbums = document.getElementById('tabAlbums');
+    const tabTrash = document.getElementById('tabTrash');
+    const trashBadge = document.getElementById('trashBadge');
+    const emptyTrashBtn = document.getElementById('emptyTrashBtn');
+
+    // Modal
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const fTitle = document.getElementById('fTitle');
+    const fDesc = document.getElementById('fDesc');
+    const fTags = document.getElementById('fTags');
+    const fCategory = document.getElementById('fCategory');
+    const catList = document.getElementById('catList');
+    const btnCancel = document.getElementById('btnCancel');
+    const btnSave = document.getElementById('btnSave');
+
+    /** @type {{ id:string, dataUrl:string, name:string, lastModified:number, size:number, title:string, desc:string, tags:string[], category?:string, exif?: { dateTakenMs?: number|null, make?: string|null, model?: string|null, orientation?: number|null }, isDeleted?: boolean, deletedAt?: number|null, orderIndex?: number }[]} */
+    let photos = [];
+    /** @type {{ [cat:string]: string }} */
+    let albumCovers = {};
+    let editingId = null;
+    let query = '';
+    let currentCategory = '全部';
+    let sortBy = 'time';
+    let sortOrder = 'desc';
+    let pageSize = 12;
+    let visibleCount = pageSize;
+    let showTrash = false;
+    let showAlbums = false;
+
+    const DEFAULT_CAT = '未分類';
+
+    function uid(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+    function prettySize(bytes){const u=['B','KB','MB','GB'];let i=0,n=bytes;while(n>=1024&&i<u.length-1){n/=1024;i++}return `${n.toFixed(1)} ${u[i]}`}
+    function fileNameWithoutExt(name=''){const i=name.lastIndexOf('.');return i>0?name.slice(0,i):name||'未命名圖片'}
+
+    function safeGetLS(key){try{return localStorage.getItem(key)}catch(e){console.warn('讀取 LS 失敗',e);return null}}
+    function safeSetLS(key,val){try{localStorage.setItem(key,val);return true}catch(e){alert('儲存失敗，可能超過 LocalStorage 容量。');console.warn('寫入 LS 失敗',e);return false}}
+    function saveToStorage(){return safeSetLS(LS_KEY, JSON.stringify(photos))}
+    function loadFromStorage(){const raw=safeGetLS(LS_KEY);if(!raw) return [];try{const arr=JSON.parse(raw);if(Array.isArray(arr))return arr}catch(e){console.warn('解析 JSON 失敗',e)}return []}
+
+    function saveCovers(){ safeSetLS(LS_COVERS, JSON.stringify(albumCovers)); }
+    function loadCovers(){ try{ const raw=safeGetLS(LS_COVERS); const obj = raw? JSON.parse(raw) : {}; return (obj && typeof obj==='object')? obj : {}; }catch(e){ return {}; } }
+
+    // 分類（只統計未刪除）
+    function getAllCategories(){const set=new Set();photos.forEach(p=>{ if(p.isDeleted) return; set.add((p.category&&p.category.trim())||DEFAULT_CAT)});set.add(DEFAULT_CAT);return Array.from(set).sort((a,b)=>a.localeCompare(b))}
+    function buildCategorySelect(){const cats=getAllCategories();const prev=currentCategory;categorySelect.innerHTML='';categorySelect.appendChild(new Option('全部','全部'));cats.forEach(c=>categorySelect.appendChild(new Option(c,c)));categorySelect.value=(cats.includes(prev)||prev==='全部')?prev:'全部';currentCategory=categorySelect.value}
+    function buildCategoryDatalist(){const cats=getAllCategories();catList.innerHTML='';cats.forEach(c=>{const opt=document.createElement('option');opt.value=c;catList.appendChild(opt)})}
+
+    // 搜尋 + 分類 + 視圖切換
+    function baseFilter(list){
+      const q=(query||'').trim().toLowerCase();
+      const tokens=q?q.split(/\s+/).filter(Boolean):[];
+      return list.filter(p=>{
+        const inTrash = !!p.isDeleted;
+        if(showTrash? !inTrash : inTrash) return false; // 視圖切換（相簿/回收桶）
+        if(showAlbums) return false; // 相簿列表不顯示相片卡
+        const cat=(p.category&&p.category.trim())||DEFAULT_CAT;
+        if(!showTrash && currentCategory!=='全部' && cat!==currentCategory) return false;
+        if(!tokens.length) return true;
+        const hay=[p.title||'',p.desc||'',(p.tags||[]).join(' '),p.name||''].join(' ').toLowerCase();
+        return tokens.every(tok=>hay.includes(tok));
+      })
+    }
+
+    // 排序：時間 / 標題 / 自訂（orderIndex）
+    function sortPhotos(list){
+      const arr=list.slice();
+      const order = sortOrder==='asc'?1:-1;
+      if(sortBy==='custom'){
+        arr.sort((a,b)=>{
+          const aIdx = typeof a.orderIndex==='number'? a.orderIndex : Number.MAX_SAFE_INTEGER;
+          const bIdx = typeof b.orderIndex==='number'? b.orderIndex : Number.MAX_SAFE_INTEGER;
+          if(aIdx===bIdx) return 0; return (aIdx>bIdx?1:-1);
+        });
+      } else if(sortBy==='time'){
+        arr.sort((a,b)=>{const t1=Number(a.lastModified||0),t2=Number(b.lastModified||0);return (t1===t2?0:(t1>t2?1:-1))*order})
+      }else{ // title
+        arr.sort((a,b)=>{const s1=(a.title||fileNameWithoutExt(a.name)).toLowerCase();const s2=(b.title||fileNameWithoutExt(b.name)).toLowerCase();if(s1===s2) return 0;return (s1>s2?1:-1)*order})
+      }
+      return arr
+    }
+
+    function getFilteredSorted(){return sortPhotos(baseFilter(photos))}
+    function getVisibleData(){return getFilteredSorted().slice(0, visibleCount)}
+
+    function updateCounters(){
+      const trashCount = photos.filter(p=>p.isDeleted).length;
+      trashBadge.textContent = String(trashCount);
+    }
+
+    function updatePagerUI(total){
+      const shown = Math.min(visibleCount, total);
+      countAll.textContent=String(photos.filter(p=>!p.isDeleted).length);
+      countFiltered.textContent=String(total);
+      countShown.textContent=String(shown);
+      const hasMore = shown < total;
+      const showPager = !showAlbums; // 相簿列表不需要分頁條
+      pager.style.display = showPager ? 'flex' : 'none';
+      if(showPager){
+        loadMoreBtn.disabled = !hasMore;
+        pagerHint.textContent = hasMore ? `尚有 ${total - shown} 張未顯示` : (total===0 ? (showTrash?'回收桶沒有內容':'沒有符合的相片') : '已顯示全部');
+      }
+      emptyTrashBtn.style.display = showTrash ? 'inline-flex' : 'none';
+    }
+
+    // ===== 相簿封面邏輯 =====
+    function getCategoryOf(p){ return (p.category&&p.category.trim())||DEFAULT_CAT; }
+    function getPhotosByCategory(cat){ return photos.filter(p=>!p.isDeleted && getCategoryOf(p)===cat); }
+    function latestPhotoInCategory(cat){ const arr = getPhotosByCategory(cat).slice().sort((a,b)=>Number(b.lastModified||0)-Number(a.lastModified||0)); return arr[0]||null; }
+    function coverPhotoForCategory(cat){
+      const id = albumCovers[cat];
+      if(id){ const p = photos.find(x=>x.id===id && !x.isDeleted && getCategoryOf(x)===cat); if(p) return p; }
+      return latestPhotoInCategory(cat);
+    }
+    function setCoverForCategory(cat, photoId){ albumCovers[cat]=photoId; saveCovers(); render(); }
+    function clearCoverForCategory(cat){ delete albumCovers[cat]; saveCovers(); render(); }
+
+    // 當相片被刪除或移動分類時，若正好是封面 → 自動清除或移轉
+    function reconcileCovers(){
+      const cats = Object.keys(albumCovers);
+      cats.forEach(cat=>{
+        const pid = albumCovers[cat];
+        const p = photos.find(x=>x.id===pid);
+        if(!p || p.isDeleted || getCategoryOf(p)!==cat){ delete albumCovers[cat]; }
+      });
+      saveCovers();
+    }
+
+    // 渲染
+    function fmt(dt){ const d=new Date(dt||Date.now()); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` }
+
+    function renderAlbumsView(){
+      const cats = getAllCategories();
+      const frag = document.createDocumentFragment();
+      if(cats.length===0){
+        const empty=document.createElement('div'); empty.className='empty'; empty.textContent='目前沒有任何分類。'; frag.appendChild(empty);
+      }else{
+        cats.forEach(cat=>{
+          const card=document.createElement('article'); card.className='card';
+          const thumb=document.createElement('div'); thumb.className='thumb';
+          const cover = coverPhotoForCategory(cat);
+          const img=document.createElement('img'); img.alt=cat+' 封面'; img.src = cover? cover.dataUrl : 'data:image/svg+xml;utf8,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="100%" height="100%" fill="#eef2f7"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="20">${cat}</text></svg>`);
+          thumb.appendChild(img);
+          const meta=document.createElement('div'); meta.className='meta';
+          const titleRow=document.createElement('div'); titleRow.className='title-row';
+          const title=document.createElement('div'); title.className='title album-title'; title.textContent=cat;
+          const btnRow=document.createElement('div'); btnRow.className='actions';
+          const viewBtn=document.createElement('button'); viewBtn.className='btn small'; viewBtn.type='button'; viewBtn.textContent='查看'; viewBtn.addEventListener('click',()=>{ currentCategory=cat; categorySelect.value=cat; setTab('library'); });
+          const clrBtn=document.createElement('button'); clrBtn.className='btn small secondary'; clrBtn.type='button'; clrBtn.textContent='清除封面'; clrBtn.addEventListener('click',()=>clearCoverForCategory(cat));
+          btnRow.appendChild(viewBtn); btnRow.appendChild(clrBtn);
+          titleRow.appendChild(title); titleRow.appendChild(btnRow);
+          const metaLine=document.createElement('div'); metaLine.className='album-meta';
+          const count = getPhotosByCategory(cat).length;
+          metaLine.textContent = `相片 ${count} 張 ${albumCovers[cat]? '｜已指定封面' : (cover? '｜採用預設封面（最新）' : '')}`;
+          meta.appendChild(titleRow); meta.appendChild(metaLine);
+          card.appendChild(thumb); card.appendChild(meta); frag.appendChild(card);
+        });
+      }
+      grid.innerHTML=''; grid.appendChild(frag);
+    }
+
+    function renderPhotosView(){
+      const data = getVisibleData();
+      const total = getFilteredSorted().length;
+      updateCounters();
+      updatePagerUI(total);
+
+      const frag=document.createDocumentFragment();
+      if(data.length===0){
+        const empty=document.createElement('div'); empty.className='empty';
+        empty.textContent = showTrash ? '回收桶是空的。' : (photos.filter(p=>!p.isDeleted).length===0?'還沒有相片，請從上方上傳。':'沒有符合目前搜尋/分類的結果。');
+        frag.appendChild(empty);
+      }else{
+        data.forEach((p)=>{
+          const card=document.createElement('article'); card.className='card'; card.dataset.id=p.id;
+          const thumb=document.createElement('div'); thumb.className='thumb';
+          const img=document.createElement('img'); img.src=p.dataUrl; img.alt=p.title||p.name; thumb.appendChild(img);
+          const meta=document.createElement('div'); meta.className='meta';
+          const titleRow=document.createElement('div'); titleRow.className='title-row';
+          const title=document.createElement('div'); title.className='title'; title.textContent=p.title||fileNameWithoutExt(p.name);
+
+          const btnRow=document.createElement('div'); btnRow.className='actions';
+          if(showTrash){
+            const restoreBtn=document.createElement('button'); restoreBtn.className='btn small'; restoreBtn.type='button'; restoreBtn.textContent='還原'; restoreBtn.addEventListener('click',()=>restorePhoto(p.id));
+            const delBtn=document.createElement('button'); delBtn.className='btn small danger'; delBtn.type='button'; delBtn.textContent='永久刪除'; delBtn.addEventListener('click',()=>permanentlyDelete(p.id));
+            btnRow.appendChild(restoreBtn); btnRow.appendChild(delBtn);
+          }else{
+            const editBtn=document.createElement('button'); editBtn.className='btn small'; editBtn.type='button'; editBtn.textContent='編輯'; editBtn.addEventListener('click',()=>openEditor(p.id));
+            const trashBtn=document.createElement('button'); trashBtn.className='btn small danger'; trashBtn.type='button'; trashBtn.textContent='刪除'; trashBtn.addEventListener('click',()=>moveToTrash(p.id));
+            const coverBtn=document.createElement('button'); coverBtn.className='btn small cover'; coverBtn.type='button'; coverBtn.textContent='設為封面';
+            coverBtn.addEventListener('click',()=>{ const cat=getCategoryOf(p); setCoverForCategory(cat, p.id); });
+            btnRow.appendChild(editBtn); btnRow.appendChild(trashBtn); btnRow.appendChild(coverBtn);
+          }
+
+          titleRow.appendChild(title); titleRow.appendChild(btnRow);
+
+          const time=document.createElement('div'); time.className='time'; const dt=new Date(p.lastModified||Date.now());
+          const cat=getCategoryOf(p);
+          const isCover = albumCovers[cat] === p.id;
+          const coverBadge = isCover ? `｜`+`<span class="cover-ind">${cat} 封面</span>` : '';
+          time.innerHTML=`時間：${fmt(dt)}｜${prettySize(p.size||0)}｜分類：${cat} ${coverBadge}`;
+
+          const tagsWrap=document.createElement('div'); tagsWrap.className='tags'; (p.tags||[]).filter(Boolean).forEach(t=>{const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; tagsWrap.appendChild(chip)});
+
+          meta.appendChild(titleRow); meta.appendChild(time); meta.appendChild(tagsWrap);
+          card.appendChild(thumb); card.appendChild(meta); frag.appendChild(card);
+        })
+      }
+      grid.innerHTML=''; grid.appendChild(frag);
+    }
+
+    function render(){
+      if(showAlbums){
+        // 相簿列表視圖
+        countFiltered.textContent = '—';
+        countShown.textContent = '—';
+        updateCounters();
+        pager.style.display='none';
+        renderAlbumsView();
+      }else{
+        renderPhotosView();
+      }
+    }
+
+    // 讀檔為 DataURL
+    function readFileAsDataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('讀檔失敗'));r.onload=()=>resolve(r.result);r.readAsDataURL(file)})}
+
+    // 移至回收桶 / 還原 / 永久刪除
+    function moveToTrash(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(p.isDeleted) return; // 若此相片為某分類封面，進回收桶時清掉封面
+      const cat=getCategoryOf(p); if(albumCovers[cat]===p.id){ delete albumCovers[cat]; saveCovers(); }
+      p.isDeleted=true; p.deletedAt=Date.now(); saveToStorage(); render(); }
+    function restorePhoto(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(!p.isDeleted) return; p.isDeleted=false; p.deletedAt=null; saveToStorage(); render(); }
+    function permanentlyDelete(id){ const idx=photos.findIndex(x=>x.id===id); if(idx<0) return; const p=photos[idx]; const cat=p?getCategoryOf(p):null; if(p && albumCovers[cat]===p.id){ delete albumCovers[cat]; saveCovers(); } if(confirm('此動作無法還原。確定永久刪除？')){ photos.splice(idx,1); saveToStorage(); render(); } }
+    function emptyTrash(){ if(!photos.some(p=>p.isDeleted)) return alert('回收桶目前是空的'); if(!confirm('將永久刪除回收桶內的所有項目（同時清理封面指向），無法復原。要繼續嗎？')) return; const idsToDelete = photos.filter(p=>p.isDeleted).map(p=>p.id); photos = photos.filter(p=>!p.isDeleted); // 清理封面
+      Object.keys(albumCovers).forEach(cat=>{ if(idsToDelete.includes(albumCovers[cat])) delete albumCovers[cat]; }); saveCovers(); saveToStorage(); render(); }
+
+    function updateAfterCriteriaChanged(){ visibleCount = pageSize; render(); }
+
+    // 事件：上傳
+    fileInput.addEventListener('change', async (e)=>{
+      const files=Array.from(e.target.files||[]); if(!files.length) return;
+      const images=files.filter(f=>f.type&&f.type.startsWith('image/'));
+      const nonImages=files.filter(f=>!f.type||!f.type.startsWith('image/'));
+      if(nonImages.length) alert('已略過非圖片檔案：\n'+nonImages.map(f=>'• '+f.name).join('\n'));
+      for(const file of images){
+        try{ const dataUrl=await readFileAsDataURL(file);
+          const maxOrder = photos.reduce((m,p)=>Math.max(m, typeof p.orderIndex==='number'?p.orderIndex:-1), -1);
+          photos.push({id:uid(),dataUrl:String(dataUrl),name:file.name,lastModified:file.lastModified,size:file.size,title:fileNameWithoutExt(file.name),desc:'',tags:[],category:DEFAULT_CAT,isDeleted:false,deletedAt:null, orderIndex: maxOrder+10});
+        }catch(err){ console.warn('轉換 DataURL 失敗：',err) }
+      }
+      saveToStorage(); buildCategorySelect(); buildCategoryDatalist(); updateAfterCriteriaChanged(); fileInput.value='';
+    });
+
+    // 事件：清空全部（含回收桶 + 封面）
+    clearBtn.addEventListener('click',()=>{ if(!photos.length && Object.keys(albumCovers).length===0) return; if(confirm('將刪除所有相片、回收桶內容與封面設定（不可復原）。確定？')){ photos=[]; albumCovers={}; saveToStorage(); saveCovers(); buildCategorySelect(); buildCategoryDatalist(); updateAfterCriteriaChanged(); } })
+    emptyTrashBtn.addEventListener('click', emptyTrash);
+
+    // 事件：搜尋 / 分類 / 排序 / 每頁筆數 / 載入更多
+    searchInput.addEventListener('input',e=>{ query=e.target.value||''; updateAfterCriteriaChanged() })
+    categorySelect.addEventListener('change',e=>{ currentCategory=e.target.value; setTab('library'); updateAfterCriteriaChanged() })
+    sortBySelect.addEventListener('change',e=>{ sortBy=e.target.value; updateAfterCriteriaChanged() })
+    sortOrderSelect.addEventListener('change',e=>{ sortOrder=e.target.value; updateAfterCriteriaChanged() })
+    pageSizeSelect.addEventListener('change',e=>{ pageSize=Number(e.target.value)||12; updateAfterCriteriaChanged() })
+    loadMoreBtn.addEventListener('click',()=>{ const total=getFilteredSorted().length; visibleCount=Math.min(visibleCount+pageSize, total); render() })
+
+    // 視圖切換：相簿 / 相簿列表 / 回收桶
+    function setTab(which){
+      showAlbums = (which==='albums');
+      showTrash = (which==='trash');
+      tabLibrary.classList.toggle('active', which==='library');
+      tabAlbums.classList.toggle('active', which==='albums');
+      tabTrash.classList.toggle('active', which==='trash');
+      updateAfterCriteriaChanged();
+    }
+    tabLibrary.addEventListener('click',()=>setTab('library'));
+    tabAlbums.addEventListener('click',()=>setTab('albums'));
+    tabTrash.addEventListener('click',()=>setTab('trash'));
+
+    // ====== 編輯彈窗 ======
+    function openEditor(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(p.isDeleted) return alert('回收桶中的項目不能編輯，請先還原。'); const oldCat=getCategoryOf(p); editingId=id; fTitle.value=p.title||fileNameWithoutExt(p.name); fDesc.value=p.desc||''; fTags.value=(p.tags||[]).join(', '); fCategory.value=oldCat; showModal(true); setTimeout(()=>fTitle.focus(),0) }
+    function showModal(show){ modalBackdrop.style.display=show?'flex':'none'; modalBackdrop.setAttribute('aria-hidden',show?'false':'true'); if(!show) editingId=null }
+    function saveEditor(){ const p=photos.find(x=>x.id===editingId); if(!p) return; const oldCat=getCategoryOf(p); p.title=fTitle.value.trim(); p.desc=fDesc.value.trim(); p.tags=fTags.value.split(',').map(s=>s.trim()).filter(Boolean); p.category=(fCategory.value||'').trim()||DEFAULT_CAT; const newCat=getCategoryOf(p); // 若分類改變且原本是封面 → 移除舊封面
+      if(oldCat!==newCat && albumCovers[oldCat]===p.id){ delete albumCovers[oldCat]; saveCovers(); }
+      saveToStorage(); buildCategorySelect(); buildCategoryDatalist(); render(); showModal(false) }
+    btnCancel.addEventListener('click',()=>showModal(false))
+    btnSave.addEventListener('click',saveEditor)
+    document.addEventListener('keydown',ev=>{ if(modalBackdrop.style.display==='flex' && ev.key==='Escape') showModal(false) })
+    modalBackdrop.addEventListener('click',ev=>{ if(ev.target===modalBackdrop) showModal(false) })
+
+    // ============================
+    // 自我測試（console）：封面選取 & 合法性校正
+    // ============================
+    function runSelfTests(){
+      console.groupCollapsed('🔎 Self-tests for Day 18');
+      try{
+        const prevPhotos = photos.slice();
+        const prevCovers = {...albumCovers};
+        const now=Date.now();
+        photos = [
+          {id:'a',name:'a.jpg',title:'A',lastModified:now-1000, category:'旅行', isDeleted:false, dataUrl:'', size:0, desc:'', tags:[], orderIndex:0},
+          {id:'b',name:'b.jpg',title:'B',lastModified:now-500, category:'旅行', isDeleted:false, dataUrl:'', size:0, desc:'', tags:[], orderIndex:10},
+          {id:'c',name:'c.jpg',title:'C',lastModified:now-200, category:'生活', isDeleted:false, dataUrl:'', size:0, desc:'', tags:[], orderIndex:20},
+        ];
+        albumCovers = {};
+        // 預設封面：旅行 → b（較新）；生活 → c
+        console.assert(coverPhotoForCategory('旅行')?.id==='b','預設封面應為該分類最新相片（b）');
+        console.assert(coverPhotoForCategory('生活')?.id==='c','預設封面應為 c');
+        // 指定封面
+        setCoverForCategory('旅行','a');
+        console.assert(albumCovers['旅行']==='a','指定封面成功');
+        // 當封面相片被刪除 → 自動清除
+        photos.find(p=>p.id==='a').isDeleted=true; reconcileCovers();
+        console.assert(!albumCovers['旅行'],'刪除封面相片後應清除封面設定');
+        // 當相片改分類 → 清除舊分類封面
+        setCoverForCategory('生活','c');
+        photos.find(p=>p.id==='c').category='其他';
+        reconcileCovers();
+        console.assert(!albumCovers['生活'],'移動分類後應清除舊分類封面');
+        // 收尾
+        photos = prevPhotos; albumCovers = prevCovers;
+        console.log('✅ 自我測試通過');
+      }catch(err){ console.error('❌ 自我測試失敗', err); }
+      console.groupEnd();
+    }
+
+    // 初始化
+    (function init(){
+      photos = loadFromStorage();
+      albumCovers = loadCovers();
+      // 升級舊資料欄位
+      let patched=false; photos.forEach(p=>{ if(!('category' in p)) { p.category=DEFAULT_CAT; patched=true } if(!('isDeleted' in p)) { p.isDeleted=false; patched=true } if(!('deletedAt' in p)) { p.deletedAt=null; patched=true } if(!('orderIndex' in p)) { p.orderIndex = 0; patched=true } }); if(patched) saveToStorage();
+      reconcileCovers();
+      buildCategorySelect(); buildCategoryDatalist();
+      sortBy = sortBySelect.value; sortOrder = sortOrderSelect.value; pageSize = Number(pageSizeSelect.value)||12; visibleCount = pageSize; showTrash=false; showAlbums=false;
+      render();
+      runSelfTests();
+      console.log('✅ Day 18：相簿封面啟用。照片數：', photos.length, '封面設定：', albumCovers);
+    })();
+  </script>
+</body>
+</html>

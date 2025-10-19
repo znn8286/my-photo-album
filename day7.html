@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Day 7｜線上相簿 - 分類下拉切換（桌機）</title>
+  <!--
+    使用方式：
+    1) 這是單一 HTML 檔，直接存成 index.html，用瀏覽器開啟即可。
+    2) 今日目標：啟用「分類下拉」過濾；可在編輯彈窗設定每張照片的「分類」。
+    3) 延續 Day 6：搜尋；Day 5：LocalStorage；Day 4：中繼資料編輯。
+    4) 預設分類為「未分類」。分類下拉永遠有「全部」與「未分類」。
+  -->
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #2b2b2b;
+      --muted: #6b6b6b;
+      --primary: #ff8c42;
+      --border: #e6e6e6;
+      --card: #fafafa;
+      --shadow: rgba(0,0,0,0.06);
+      --overlay: rgba(0,0,0,0.5);
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: "Microsoft JhengHei", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 24px; box-sizing: border-box; }
+
+    /* ====== 頁首 ====== */
+    header.site-header { border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #fff, #fff6f0); }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand__logo { width: 40px; height: 40px; border-radius: 10px; background: var(--primary); display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; }
+    .brand__title { margin: 0; font-size: 22px; }
+    .brand__subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+    /* ====== 工具列（今天啟用分類） ====== */
+    .toolbar { display: grid; grid-template-columns: 1fr 320px 180px 140px; gap: 12px; margin-top: 16px; align-items: center; }
+    .toolbar input[type="text"], .toolbar select, .toolbar button { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 14px; box-sizing: border-box; }
+    .toolbar input[type="file"] { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 14px; }
+    .toolbar button.action { background: var(--primary); color: #fff; border: none; cursor: pointer; }
+
+    /* ====== 內容區：4 欄網格 ====== */
+    main.gallery { margin-top: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+    /* ====== 卡片 ====== */
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 2px 8px var(--shadow); overflow: hidden; display: flex; flex-direction: column; }
+    .thumb { aspect-ratio: 4 / 3; background: #f4f4f4; position: relative; display: flex; align-items: center; justify-content: center; }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .meta { padding: 12px; display: grid; grid-template-rows: auto auto auto; gap: 6px; }
+    .title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .title { font-size: 15px; font-weight: 600; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .time { font-size: 12px; color: var(--muted); }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag { font-size: 11px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: #555; background: #fff; }
+    .btn { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 13px; }
+    .btn.edit { background: var(--primary); color: #fff; border: none; }
+
+    /* 輕量狀態列 */
+    .statusbar { display:flex; align-items:center; justify-content: space-between; margin: 8px 0 12px; color: var(--muted); font-size: 13px; }
+
+    /* 空狀態 */
+    .empty { border: 2px dashed var(--border); border-radius: 12px; padding: 24px; color: var(--muted); display:flex; align-items:center; justify-content:center; grid-column: 1 / -1; background:#fff; }
+
+    /* ====== Modal（編輯表單） ====== */
+    .modal-backdrop { position: fixed; inset: 0; background: var(--overlay); display: none; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { width: 560px; max-width: calc(100% - 40px); background: #fff; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,.15); overflow: hidden; }
+    .modal__header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 700; }
+    .modal__body { padding: 16px; display: grid; gap: 12px; }
+    .modal__footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+    .field { display: grid; gap: 6px; }
+    .field label { font-size: 13px; color: #444; }
+    .field input[type="text"], .field textarea, .field select { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+    .field textarea { resize: vertical; min-height: 80px; }
+
+    .btn.secondary { background: #fff; }
+    .btn.primary { background: var(--primary); color: #fff; border: none; }
+
+    /* 視窗略窄時允許 3 欄（仍屬桌機） */
+    @media (max-width: 1199px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+  </style>
+</head>
+<body>
+  <!-- ====== 頁首 ====== -->
+  <header class="site-header">
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 7）</h1>
+          <p class="brand__subtitle">分類下拉切換（可在編輯視窗設定分類；預設「未分類」）</p>
+        </div>
+      </div>
+
+      <div class="toolbar" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）">
+        <input id="fileInput" type="file" accept="image/*" multiple>
+        <select id="categorySelect"></select>
+        <select disabled>
+          <option selected>排序（Day 8 啟用）</option>
+        </select>
+        <div style="grid-column: 1 / -1; font-size:13px; color:var(--muted);">
+          提示：在「編輯」視窗可設定分類；下拉可切換顯示。內建「全部」與「未分類」。
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====== 內容：搜尋 + 分類 + 上傳 + 編輯 + 永續化 ====== -->
+  <main class="gallery">
+    <div class="container">
+      <div class="statusbar">
+        <div><span id="countAll">0</span> 張照片</div>
+        <div>符合目前篩選：<span id="countFiltered">0</span> 張</div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px;">
+        <button id="clearBtn" class="btn" type="button" title="清空全部資料">清空全部</button>
+      </div>
+      <div id="grid" class="grid" aria-live="polite"></div>
+    </div>
+  </main>
+
+  <!-- ====== Modal：編輯圖片中繼資料 ====== -->
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal" role="document" aria-labelledby="modalTitle">
+      <div class="modal__header" id="modalTitle">編輯圖片資訊</div>
+      <div class="modal__body">
+        <div class="field">
+          <label for="fTitle">標題</label>
+          <input id="fTitle" type="text" placeholder="例：台北小旅行" />
+        </div>
+        <div class="field">
+          <label for="fDesc">敘述</label>
+          <textarea id="fDesc" placeholder="簡短描述這張照片...（非必填）"></textarea>
+        </div>
+        <div class="field">
+          <label for="fTags">標籤（以逗號 , 分隔）</label>
+          <input id="fTags" type="text" placeholder="例：旅遊, 朋友, 晚上" />
+        </div>
+        <div class="field">
+          <label for="fCategory">分類</label>
+          <!-- 文本輸入 + datalist（初學者易懂；可直接打字或選擇歷史分類） -->
+          <input id="fCategory" list="catList" type="text" placeholder="例：旅遊 / 生活 / 寵物" />
+          <datalist id="catList"></datalist>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button id="btnCancel" class="btn secondary" type="button">取消</button>
+        <button id="btnSave" class="btn primary" type="button">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container" style="border-top:1px solid var(--border); margin-top:32px; padding-top:16px; color:var(--muted); font-size:13px; text-align:center;">
+      Day 7 完成：分類下拉切換 + 編輯視窗可設定分類。
+    </div>
+  </footer>
+
+  <script>
+    // ============================
+    // Day 7：分類下拉切換（初學者版）
+    // - 延續 Day 6 搜尋 / Day 5 LocalStorage / Day 4 編輯
+    // ============================
+
+    const LS_KEY = 'pa_photos_v1';
+
+    const fileInput = document.getElementById('fileInput');
+    const searchInput = document.getElementById('searchInput');
+    const categorySelect = document.getElementById('categorySelect');
+    const grid = document.getElementById('grid');
+    const clearBtn = document.getElementById('clearBtn');
+    const countAll = document.getElementById('countAll');
+    const countFiltered = document.getElementById('countFiltered');
+
+    // Modal
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const fTitle = document.getElementById('fTitle');
+    const fDesc = document.getElementById('fDesc');
+    const fTags = document.getElementById('fTags');
+    const fCategory = document.getElementById('fCategory');
+    const catList = document.getElementById('catList');
+    const btnCancel = document.getElementById('btnCancel');
+    const btnSave = document.getElementById('btnSave');
+
+    /** @type {{ id:string, dataUrl:string, name:string, lastModified:number, size:number, title:string, desc:string, tags:string[], category?:string }[]} */
+    let photos = [];
+    let editingId = null;
+    let query = '';
+    let currentCategory = '全部';
+
+    const DEFAULT_CAT = '未分類';
+
+    function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+
+    function prettySize(bytes) {
+      const units = ['B','KB','MB','GB'];
+      let i = 0, num = bytes;
+      while (num >= 1024 && i < units.length - 1) { num /= 1024; i++; }
+      return `${num.toFixed(1)} ${units[i]}`;
+    }
+
+    function fileNameWithoutExt(name='') {
+      const i = name.lastIndexOf('.');
+      return i > 0 ? name.slice(0, i) : name || '未命名圖片';
+    }
+
+    function safeGetLS(key) { try { return localStorage.getItem(key); } catch (e) { console.warn('讀取 LocalStorage 失敗：', e); return null; } }
+    function safeSetLS(key, val) { try { localStorage.setItem(key, val); return true; } catch (e) { alert('儲存失敗，可能超過 LocalStorage 容量。'); console.warn('寫入 LocalStorage 失敗：', e); return false; } }
+    function saveToStorage() { return safeSetLS(LS_KEY, JSON.stringify(photos)); }
+    function loadFromStorage() {
+      const raw = safeGetLS(LS_KEY);
+      if (!raw) return [];
+      try { const arr = JSON.parse(raw); if (Array.isArray(arr)) return arr; } catch (e) { console.warn('解析 JSON 失敗：', e); }
+      return [];
+    }
+
+    // 取得所有分類（含未分類），供下拉與 datalist 使用
+    function getAllCategories() {
+      const set = new Set();
+      photos.forEach(p => set.add((p.category && p.category.trim()) || DEFAULT_CAT));
+      set.add(DEFAULT_CAT);
+      return Array.from(set).sort((a,b)=>a.localeCompare(b));
+    }
+
+    function buildCategorySelect() {
+      const cats = getAllCategories();
+      const prev = currentCategory;
+      categorySelect.innerHTML = '';
+      const allOpt = new Option('全部', '全部');
+      categorySelect.appendChild(allOpt);
+      cats.forEach(c => categorySelect.appendChild(new Option(c, c)));
+      // 還原先前選擇（不存在就退回全部）
+      categorySelect.value = cats.includes(prev) || prev === '全部' ? prev : '全部';
+      currentCategory = categorySelect.value;
+    }
+
+    function buildCategoryDatalist() {
+      const cats = getAllCategories();
+      catList.innerHTML = '';
+      cats.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c; catList.appendChild(opt);
+      });
+    }
+
+    // 依查詢與分類回傳過濾後之陣列
+    function getFilteredPhotos() {
+      const q = query.trim().toLowerCase();
+      const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+      return photos.filter(p => {
+        // 分類先過濾
+        const cat = (p.category && p.category.trim()) || DEFAULT_CAT;
+        if (currentCategory !== '全部' && cat !== currentCategory) return false;
+        // 文字再過濾
+        if (!tokens.length) return true;
+        const hay = [p.title||'', p.desc||'', (p.tags||[]).join(' '), p.name||''].join(' ').toLowerCase();
+        return tokens.every(tok => hay.includes(tok));
+      });
+    }
+
+    function render() {
+      const data = getFilteredPhotos();
+      countAll.textContent = String(photos.length);
+      countFiltered.textContent = String(data.length);
+
+      const frag = document.createDocumentFragment();
+
+      if (data.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = (photos.length === 0)
+          ? '還沒有相片，請從上方上傳。'
+          : '沒有符合目前搜尋/分類的結果。';
+        frag.appendChild(empty);
+      } else {
+        data.forEach(p => {
+          const card = document.createElement('article');
+          card.className = 'card';
+          card.dataset.id = p.id;
+
+          const thumb = document.createElement('div');
+          thumb.className = 'thumb';
+          const img = document.createElement('img');
+          img.src = p.dataUrl;
+          img.alt = p.title || p.name;
+          thumb.appendChild(img);
+
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+
+          const titleRow = document.createElement('div');
+          titleRow.className = 'title-row';
+          const title = document.createElement('div');
+          title.className = 'title';
+          title.textContent = p.title || fileNameWithoutExt(p.name);
+
+          const editBtn = document.createElement('button');
+          editBtn.className = 'btn edit';
+          editBtn.type = 'button';
+          editBtn.textContent = '編輯';
+          editBtn.addEventListener('click', () => openEditor(p.id));
+
+          titleRow.appendChild(title);
+          titleRow.appendChild(editBtn);
+
+          const time = document.createElement('div');
+          time.className = 'time';
+          const dt = new Date(p.lastModified || Date.now());
+          const cat = (p.category && p.category.trim()) || DEFAULT_CAT;
+          time.textContent = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}｜${prettySize(p.size||0)}｜分類：${cat}`;
+
+          const tagsWrap = document.createElement('div');
+          tagsWrap.className = 'tags';
+          (p.tags || []).filter(Boolean).forEach(t => {
+            const chip = document.createElement('span');
+            chip.className = 'tag';
+            chip.textContent = t;
+            tagsWrap.appendChild(chip);
+          });
+
+          meta.appendChild(titleRow);
+          meta.appendChild(time);
+          meta.appendChild(tagsWrap);
+
+          card.appendChild(thumb);
+          card.appendChild(meta);
+          frag.appendChild(card);
+        });
+      }
+
+      grid.innerHTML = '';
+      grid.appendChild(frag);
+    }
+
+    // 讀檔為 DataURL
+    function readFileAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('讀檔失敗'));
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // ====== 事件處理 ======
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      const images = files.filter(f => f.type && f.type.startsWith('image/'));
+      const nonImages = files.filter(f => !f.type || !f.type.startsWith('image/'));
+      if (nonImages.length) alert('已略過非圖片檔案：\n' + nonImages.map(f => `• ${f.name}`).join('\n'));
+
+      for (const file of images) {
+        try {
+          const dataUrl = await readFileAsDataURL(file);
+          photos.push({
+            id: uid(),
+            dataUrl: String(dataUrl),
+            name: file.name,
+            lastModified: file.lastModified,
+            size: file.size,
+            title: fileNameWithoutExt(file.name),
+            desc: '',
+            tags: [],
+            category: DEFAULT_CAT,
+          });
+        } catch (err) { console.warn('轉換 DataURL 失敗：', err); }
+      }
+
+      saveToStorage();
+      buildCategorySelect();
+      buildCategoryDatalist();
+      render();
+      fileInput.value = '';
+    });
+
+    clearBtn.addEventListener('click', () => {
+      if (!photos.length) return;
+      if (confirm('確定要清空「所有已儲存」的相片與資料嗎？此動作不可回復。')) {
+        photos = [];
+        saveToStorage();
+        buildCategorySelect();
+        buildCategoryDatalist();
+        render();
+      }
+    });
+
+    searchInput.addEventListener('input', (e) => {
+      query = e.target.value || '';
+      render();
+    });
+
+    categorySelect.addEventListener('change', (e) => {
+      currentCategory = e.target.value;
+      render();
+    });
+
+    // ====== 編輯彈窗 ======
+    function openEditor(id) {
+      const p = photos.find(x => x.id === id);
+      if (!p) return;
+      editingId = id;
+      fTitle.value = p.title || fileNameWithoutExt(p.name);
+      fDesc.value = p.desc || '';
+      fTags.value = (p.tags || []).join(', ');
+      fCategory.value = (p.category && p.category.trim()) || DEFAULT_CAT;
+      showModal(true);
+      setTimeout(() => fTitle.focus(), 0);
+    }
+
+    function showModal(show) {
+      modalBackdrop.style.display = show ? 'flex' : 'none';
+      modalBackdrop.setAttribute('aria-hidden', show ? 'false' : 'true');
+      if (!show) editingId = null;
+    }
+
+    function saveEditor() {
+      const p = photos.find(x => x.id === editingId);
+      if (!p) return;
+      p.title = fTitle.value.trim();
+      p.desc = fDesc.value.trim();
+      p.tags = fTags.value.split(',').map(s => s.trim()).filter(Boolean);
+      p.category = (fCategory.value || '').trim() || DEFAULT_CAT;
+      saveToStorage();
+      buildCategorySelect();
+      buildCategoryDatalist();
+      render();
+      showModal(false);
+    }
+
+    btnCancel.addEventListener('click', () => showModal(false));
+    btnSave.addEventListener('click', saveEditor);
+    document.addEventListener('keydown', (ev) => { if (modalBackdrop.style.display === 'flex' && ev.key === 'Escape') showModal(false); });
+    modalBackdrop.addEventListener('click', (ev) => { if (ev.target === modalBackdrop) showModal(false); });
+
+    // ====== 初始化 ======
+    (function init() {
+      photos = loadFromStorage();
+      // 資料結構升級（舊資料沒有 category 時補上）
+      let patched = false;
+      photos.forEach(p => { if (!('category' in p)) { p.category = DEFAULT_CAT; patched = true; } });
+      if (patched) saveToStorage();
+
+      buildCategorySelect();
+      buildCategoryDatalist();
+      render();
+      console.log('✅ Day 7：分類下拉切換已啟用。照片數：', photos.length);
+    })();
+  </script>
+</body>
+</html>
+

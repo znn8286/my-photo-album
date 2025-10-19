@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day 23｜線上相簿 - 模擬後端（json-server / MockAPI / 內建 Fake API）</title>
+  <!--
+    使用方式（純前端單檔即可跑）：
+    - 預設採用「內建 Fake API（LocalStorage）」來模擬後端 CRUD。
+    - 若想實測遠端：
+      1) MockAPI：到 https://mockapi.io 建立專案，新增 Resource：photos（欄位：id, title, desc, tags(array), dataUrl, name, size, lastModified）。
+         將下面 CONFIG.API_MODE 改為 'mockapi'，並把 CONFIG.MOCKAPI_BASE 換成你的 base，例如：
+            https://<your-id>.mockapi.io/api
+      2) json-server：在本機開啟一個 json-server：
+            npx json-server --watch db.json --port 5173
+         db.json 需有 { "photos": [] } 結構；然後把 CONFIG.API_MODE 改為 'jsonserver'，CONFIG.JSON_SERVER_BASE 改成你的端點（例：http://localhost:5173）。
+
+    今日目標：
+    - 以「API 模擬層」取代直接操作 LocalStorage 的資料流程，實作 list / create / update / delete。
+    - UI 很精簡：上傳圖片、列出卡片、編輯標題／敘述／標籤、刪除。
+    - 仍可離線操作（Fake API 使用 LocalStorage）。
+
+    自我測試：
+    - 啟動時會在 console 執行 API CRUD 測試，不修改你的實際資料。
+  -->
+  <style>
+    :root{ --bg:#ffffff; --elev:#f9fafb; --text:#1f2328; --muted:#6b7280; --primary:#ff8c42; --danger:#e11d48; --border:#e5e7eb; --radius:14px; --shadow:0 8px 24px rgba(17,24,39,.12) }
+    @media(prefers-color-scheme:dark){ :root{ --bg:#0b1220; --elev:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --primary:#ff954f; --danger:#fb7185; --border:#1f2937; --shadow:0 10px 30px rgba(0,0,0,.35) } }
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans CJK TC","Microsoft JhengHei",Arial,sans-serif;line-height:1.65}
+    .container{max-width:1100px;margin:0 auto;padding:24px}
+    header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fff7f1)}
+    @media(prefers-color-scheme:dark){header{background:linear-gradient(180deg,#0b1220,#0b1220)}}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand__logo{width:44px;height:44px;border-radius:10px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    .brand__title{margin:0;font-size:20px}
+    .brand__subtitle{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+    .toolbar{display:grid;gap:12px;margin-top:16px;align-items:center;grid-template-columns:1fr 220px 150px 150px}
+    @media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}}
+    @media(max-width:640px){.toolbar{grid-template-columns:1fr}}
+    .toolbar input,.toolbar select,.toolbar button{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+    .toolbar input[type=file]{padding:8px}
+    .btn{cursor:pointer;border-radius:10px}
+    .btn.primary{background:var(--primary);color:#fff;border:none}
+    .btn.secondary{background:#fff0;border:1px solid var(--border)}
+    .btn.danger{background:var(--danger);color:#fff;border:none}
+
+    main{padding:24px 0}
+    .grid{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+    @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--elev);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+    .thumb{aspect-ratio:4/3;background:#eef2f7;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .meta{padding:12px;display:grid;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .title{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .time{font-size:12px;color:var(--muted)}
+    .tags{display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:#555;background:#fff0}
+    .actions{display:flex;gap:8px}
+    .btn.small{padding:8px 10px;font-size:12px}
+
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+    .modal{width:560px;max-width:720px;background:var(--bg);border-radius:14px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden}
+    .modal__header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800}
+    .modal__body{padding:16px;display:grid;gap:12px}
+    .modal__footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+    .field{display:grid;gap:6px}
+    .field label{font-size:13px;color:var(--muted)}
+    .field input[type=text],.field textarea{width:100%;box-sizing:border-box;padding:12px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 23）</h1>
+          <p class="brand__subtitle">模擬後端：json-server / MockAPI / 內建 Fake API（LocalStorage）</p>
+        </div>
+      </div>
+
+      <div class="toolbar" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）" aria-label="搜尋">
+        <input id="fileInput" type="file" accept="image/*" multiple aria-label="上傳圖片">
+        <select id="apiMode" aria-label="API 模式">
+          <option value="fake" selected>Fake API（本地）</option>
+          <option value="mockapi">MockAPI（遠端）</option>
+          <option value="jsonserver">json-server（本機）</option>
+        </select>
+        <button id="refreshBtn" class="btn secondary" type="button">重新載入（GET）</button>
+      </div>
+      <div style="margin-top:6px;color:var(--muted);font-size:13px">
+        ▶ 要接 MockAPI 或 json-server？改 <strong>右上方選單</strong>，並在程式內 <code>CONFIG</code> 設定 base URL。
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <div class="statusbar" style="display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin-bottom:10px">
+        <div>照片總數（來自 API）：<span id="apiCount">0</span></div>
+        <div>符合：<span id="countFiltered">0</span>｜已顯示：<span id="countShown">0</span></div>
+      </div>
+
+      <div id="grid" class="grid" aria-live="polite"></div>
+    </div>
+  </main>
+
+  <!-- 編輯 Modal -->
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal" role="document" aria-labelledby="modalTitle">
+      <div class="modal__header" id="modalTitle">編輯圖片資訊（PUT/PATCH）</div>
+      <div class="modal__body">
+        <div class="field">
+          <label for="fTitle">標題</label>
+          <input id="fTitle" type="text" placeholder="例：台北小旅行" />
+        </div>
+        <div class="field">
+          <label for="fDesc">敘述</label>
+          <textarea id="fDesc" placeholder="簡短描述...（非必填）"></textarea>
+        </div>
+        <div class="field">
+          <label for="fTags">標籤（逗號分隔）</label>
+          <input id="fTags" type="text" placeholder="旅遊, 朋友, 晚上" />
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button id="btnCancel" class="btn secondary" type="button">取消</button>
+        <button id="btnSave" class="btn primary" type="button">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container" style="border-top:1px solid var(--border); margin-top:24px; padding-top:16px; color:var(--muted); font-size:13px; text-align:center;">
+      Day 23 完成：API 模擬層（list / create / update / delete）。預設 Fake API 可離線使用。
+    </div>
+  </footer>
+
+  <script>
+  // ============================
+  // Day 23：模擬後端（json-server / MockAPI / 內建 Fake API）
+  // ============================
+
+  // ====== 可調整的設定 ======
+  const CONFIG = {
+    API_MODE: 'fake', // 'fake' | 'mockapi' | 'jsonserver'
+    MOCKAPI_BASE: 'https://example.mockapi.io/api', // <- 換成你的 MockAPI base（不要結尾斜線）
+    JSON_SERVER_BASE: 'http://localhost:5173', // <- 你的 json-server base（不要結尾斜線）
+  };
+
+  // ====== UI 元素 ======
+  const fileInput = document.getElementById('fileInput');
+  const searchInput = document.getElementById('searchInput');
+  const apiModeSelect = document.getElementById('apiMode');
+  const refreshBtn = document.getElementById('refreshBtn');
+
+  const grid = document.getElementById('grid');
+  const apiCount = document.getElementById('apiCount');
+  const countFiltered = document.getElementById('countFiltered');
+  const countShown = document.getElementById('countShown');
+
+  const modalBackdrop = document.getElementById('modalBackdrop');
+  const fTitle = document.getElementById('fTitle');
+  const fDesc = document.getElementById('fDesc');
+  const fTags = document.getElementById('fTags');
+  const btnCancel = document.getElementById('btnCancel');
+  const btnSave = document.getElementById('btnSave');
+
+  // ====== 型別註解（參考） ======
+  /** @typedef {{ id:string, title:string, desc:string, tags:string[], dataUrl:string, name:string, size:number, lastModified:number }} Photo */
+
+  // ====== API 介面（抽象） ======
+  const api = {
+    list: async function(){},
+    create: async function(photo){},
+    update: async function(id, patch){},
+    remove: async function(id){}
+  };
+
+  // ====== 內建 Fake API（LocalStorage） ======
+  const LS_FAKE_API = 'pa_fake_api_photos_v1';
+  function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  function lsRead(){ try{ const raw = localStorage.getItem(LS_FAKE_API); if(!raw) return []; const arr = JSON.parse(raw); return Array.isArray(arr)? arr: []; }catch(e){ return []; } }
+  function lsWrite(list){ try{ localStorage.setItem(LS_FAKE_API, JSON.stringify(list)); return true; }catch(e){ alert('LocalStorage 寫入失敗'); return false; } }
+
+  const fakeApi = {
+    list: async function(){ const list = lsRead(); return list; },
+    create: async function(photo){ const list = lsRead(); const item = Object.assign({}, photo); item.id = item.id || uid(); list.push(item); lsWrite(list); return item; },
+    update: async function(id, patch){ const list = lsRead(); const idx = list.findIndex(function(x){ return x.id === id; }); if(idx < 0) throw new Error('Not found'); const updated = Object.assign({}, list[idx], patch); list[idx] = updated; lsWrite(list); return updated; },
+    remove: async function(id){ const list = lsRead(); const idx = list.findIndex(function(x){ return x.id === id; }); if(idx < 0) throw new Error('Not found'); const sp = list.splice(idx,1)[0]; lsWrite(list); return sp; }
+  };
+
+  // ====== MockAPI / json-server 實作 ======
+  function ensureBase(url){ return (url||'').replace(/\/$/, ''); }
+  function photoFromServer(raw){
+    // 兼容不同後端欄位；確保必備欄位存在
+    return {
+      id: String(raw.id),
+      title: String(raw.title || raw.name || '未命名圖片'),
+      desc: String(raw.desc || ''),
+      tags: Array.isArray(raw.tags) ? raw.tags : (raw.tags ? String(raw.tags).split(',').map(function(s){return s.trim();}).filter(Boolean) : []),
+      dataUrl: String(raw.dataUrl || ''),
+      name: String(raw.name || 'image'),
+      size: Number(raw.size || 0),
+      lastModified: Number(raw.lastModified || Date.now())
+    };
+  }
+
+  function makeRestApi(base, isJsonServer){
+    const BASE = ensureBase(base);
+    const PATH = isJsonServer ? '/photos' : '/photos'; // 兩者皆為 /photos
+
+    return {
+      list: async function(){
+        const res = await fetch(BASE + PATH, { method: 'GET' });
+        if(!res.ok) throw new Error('GET 失敗: ' + res.status);
+        const arr = await res.json();
+        return arr.map(photoFromServer);
+      },
+      create: async function(photo){
+        const body = JSON.stringify(photo);
+        const res = await fetch(BASE + PATH, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: body });
+        if(!res.ok) throw new Error('POST 失敗: ' + res.status);
+        const json = await res.json();
+        return photoFromServer(json);
+      },
+      update: async function(id, patch){
+        const body = JSON.stringify(patch);
+        const url = BASE + PATH + '/' + encodeURIComponent(id);
+        const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type':'application/json' }, body: body });
+        if(!res.ok) throw new Error('PATCH 失敗: ' + res.status);
+        const json = await res.json();
+        return photoFromServer(json);
+      },
+      remove: async function(id){
+        const url = BASE + PATH + '/' + encodeURIComponent(id);
+        const res = await fetch(url, { method: 'DELETE' });
+        if(!res.ok) throw new Error('DELETE 失敗: ' + res.status);
+        return true;
+      }
+    };
+  }
+
+  // 根據模式切換 API 實作
+  function applyApiMode(mode){
+    const m = mode || CONFIG.API_MODE;
+    if(m === 'mockapi'){
+      const impl = makeRestApi(CONFIG.MOCKAPI_BASE, false);
+      api.list = impl.list; api.create = impl.create; api.update = impl.update; api.remove = impl.remove;
+    } else if(m === 'jsonserver'){
+      const impl = makeRestApi(CONFIG.JSON_SERVER_BASE, true);
+      api.list = impl.list; api.create = impl.create; api.update = impl.update; api.remove = impl.remove;
+    } else {
+      api.list = fakeApi.list; api.create = fakeApi.create; api.update = fakeApi.update; api.remove = fakeApi.remove;
+    }
+  }
+
+  // ====== 公用小工具 ======
+  function prettySize(bytes){ const u=['B','KB','MB','GB']; var i=0,n=bytes; while(n>=1024&&i<u.length-1){ n/=1024; i++; } return n.toFixed(1) + ' ' + u[i]; }
+  function fileNameWithoutExt(name){ if(typeof name!== 'string') return 'image'; var i=name.lastIndexOf('.'); return i>0? name.slice(0,i) : (name||'image'); }
+  function fmtFull(ts){ var d=new Date(ts||Date.now()); function pad(n){return String(n).padStart(2,'0')} return d.getFullYear()+ '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function readFileAsDataURL(file){ return new Promise(function(resolve,reject){ var r=new FileReader(); r.onerror=function(){reject(new Error('讀檔失敗'))}; r.onload=function(){resolve(r.result)}; r.readAsDataURL(file); }); }
+
+  // ====== 應用狀態 ======
+  /** @type {Photo[]} */
+  var photos = [];
+  var query = '';
+  var editingId = null;
+
+  // ====== UI 渲染 ======
+  function baseFilter(list){
+    var q=(query||'').trim().toLowerCase(); if(!q) return list.slice();
+    var tokens = q.split(/\s+/).filter(function(s){return !!s});
+    return list.filter(function(p){
+      var hay=(p.title||'')+' '+(p.desc||'')+' '+(p.tags||[]).join(' ')+' '+(p.name||'') ;
+      hay = hay.toLowerCase();
+      return tokens.every(function(tok){return hay.indexOf(tok)>=0});
+    });
+  }
+  function render(){
+    var data = baseFilter(photos);
+    var frag = document.createDocumentFragment();
+    if(data.length===0){
+      var empty=document.createElement('div'); empty.className='card'; empty.style.padding='20px'; empty.textContent = photos.length? '沒有符合的結果。' : '尚無照片，請先上傳。';
+      frag.appendChild(empty);
+    } else {
+      data.forEach(function(p){
+        var card=document.createElement('article'); card.className='card'; card.dataset.id=p.id;
+        var th=document.createElement('div'); th.className='thumb'; var img=document.createElement('img'); img.src=p.dataUrl; img.alt=p.title||p.name; th.appendChild(img);
+        var meta=document.createElement('div'); meta.className='meta';
+        var titleRow=document.createElement('div'); titleRow.className='title-row';
+        var title=document.createElement('div'); title.className='title'; title.textContent=p.title||fileNameWithoutExt(p.name);
+        var btnRow=document.createElement('div'); btnRow.className='actions';
+        var editBtn=document.createElement('button'); editBtn.className='btn small'; editBtn.type='button'; editBtn.textContent='編輯'; editBtn.addEventListener('click', function(){ openEditor(p.id); });
+        var delBtn=document.createElement('button'); delBtn.className='btn small danger'; delBtn.type='button'; delBtn.textContent='刪除'; delBtn.addEventListener('click', function(){ deletePhoto(p.id); });
+        btnRow.appendChild(editBtn); btnRow.appendChild(delBtn);
+        titleRow.appendChild(title); titleRow.appendChild(btnRow);
+        var time=document.createElement('div'); time.className='time'; time.textContent = '時間：' + fmtFull(p.lastModified) + '｜' + prettySize(p.size||0);
+        var tagsWrap=document.createElement('div'); tagsWrap.className='tags'; (p.tags||[]).forEach(function(t){ var chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; tagsWrap.appendChild(chip); });
+        meta.appendChild(titleRow); meta.appendChild(time); meta.appendChild(tagsWrap);
+        card.appendChild(th); card.appendChild(meta);
+        frag.appendChild(card);
+      });
+    }
+    grid.innerHTML=''; grid.appendChild(frag);
+
+    apiCount.textContent = String(photos.length);
+    var filtered = baseFilter(photos).length;
+    countFiltered.textContent = String(filtered);
+    countShown.textContent = String(filtered);
+  }
+
+  // ====== 編輯 modal ======
+  function openEditor(id){ var p=photos.find(function(x){return x.id===id}); if(!p) return; editingId = id; fTitle.value = p.title || fileNameWithoutExt(p.name); fDesc.value=p.desc||''; fTags.value = (p.tags||[]).join(', '); showModal(true); setTimeout(function(){ fTitle.focus(); }, 0); }
+  function showModal(show){ modalBackdrop.style.display = show? 'flex':'none'; modalBackdrop.setAttribute('aria-hidden', show? 'false': 'true'); if(!show) editingId=null; }
+  async function saveEditor(){ var p = photos.find(function(x){return x.id===editingId}); if(!p) return; var patch = { title: String(fTitle.value||'').trim(), desc: String(fDesc.value||'').trim(), tags: String(fTags.value||'').split(',').map(function(s){return s.trim();}).filter(Boolean) };
+    try{ var updated = await api.update(p.id, patch); var idx = photos.findIndex(function(x){return x.id===p.id}); if(idx>=0) photos[idx]=updated; render(); showModal(false); }
+    catch(err){ alert('更新失敗：'+ err.message); }
+  }
+
+  btnCancel.addEventListener('click', function(){ showModal(false); });
+  btnSave.addEventListener('click', saveEditor);
+  modalBackdrop.addEventListener('click', function(ev){ if(ev.target===modalBackdrop) showModal(false); });
+  document.addEventListener('keydown', function(ev){ if(modalBackdrop.style.display==='flex' && ev.key==='Escape') showModal(false); });
+
+  // ====== 上傳（Create） ======
+  fileInput.addEventListener('change', async function(e){
+    var files = Array.prototype.slice.call(e.target.files||[]); if(!files.length) return;
+    var images = files.filter(function(f){ return f.type && f.type.indexOf('image/')===0; });
+    var non = files.filter(function(f){ return !f.type || f.type.indexOf('image/')!==0; });
+    if(non.length){ alert('已略過非圖片檔案:\n' + non.map(function(f){return '• '+f.name}).join('\n')); }
+    for(var i=0;i<images.length;i++){
+      var file = images[i];
+      try{
+        var dataUrl = await readFileAsDataURL(file);
+        var photo = { id:'', title:fileNameWithoutExt(file.name), desc:'', tags:[], dataUrl:String(dataUrl), name:file.name, size:file.size, lastModified:file.lastModified };
+        var created = await api.create(photo);
+        photos.push(created);
+      }catch(err){ console.warn('上傳失敗：', err); }
+    }
+    e.target.value='';
+    render();
+  });
+
+  // ====== 刪除（Delete） ======
+  async function deletePhoto(id){ if(!confirm('確定刪除這張照片？')) return; try{ await api.remove(id); photos = photos.filter(function(p){return p.id!==id}); render(); }catch(err){ alert('刪除失敗：' + err.message); } }
+
+  // ====== 搜尋 ======
+  searchInput.addEventListener('input', function(e){ query = e.target.value || ''; render(); });
+
+  // ====== 重新載入（Read） ======
+  async function reloadFromApi(){ try{ var list = await api.list(); photos = list; render(); } catch(err){ alert('讀取失敗：' + err.message); } }
+  refreshBtn.addEventListener('click', reloadFromApi);
+
+  // ====== API 模式切換 ======
+  apiModeSelect.addEventListener('change', function(e){ applyApiMode(e.target.value); reloadFromApi(); });
+
+  // ====== 自我測試（不污染實際資料） ======
+  async function runSelfTests(){
+    console.groupCollapsed('🔎 Self-tests for Day 23 (API)');
+    try{
+      // 使用獨立 key 的 fake API 暫存，不動到正式資料
+      var baseSnap = lsRead();
+      lsWrite([]); // 清空 sandbox
+      var t1 = await fakeApi.list(); console.assert(Array.isArray(t1)&&t1.length===0, '初始空陣列');
+      var created = await fakeApi.create({ id:'', title:'T', desc:'d', tags:['a'], dataUrl:'data:image/png;base64,iVBORw0KGgo=', name:'t.png', size:1, lastModified:123 });
+      console.assert(created && created.id, '建立成功且有 id');
+      var afterCreate = await fakeApi.list(); console.assert(afterCreate.length===1, '建立後長度 1');
+      var updated = await fakeApi.update(created.id, { title:'T2', tags:['a','b'] }); console.assert(updated.title==='T2' && updated.tags.length===2, '更新成功');
+      await fakeApi.remove(created.id); var afterDel = await fakeApi.list(); console.assert(afterDel.length===0, '刪除成功');
+      // 還原資料
+      lsWrite(baseSnap);
+      console.log('✅ 自我測試通過');
+    }catch(err){ console.error('❌ 自我測試失敗', err); }
+    console.groupEnd();
+  }
+
+  // ====== 初始化 ======
+  (function init(){
+    // 套用預設/下拉的 API 模式
+    apiModeSelect.value = CONFIG.API_MODE;
+    applyApiMode(CONFIG.API_MODE);
+    reloadFromApi();
+    runSelfTests();
+  })();
+  </script>
+</body>
+</html>

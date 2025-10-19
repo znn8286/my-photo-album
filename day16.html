@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day 16｜線上相簿 - 回收桶（軟刪除／還原／自動清除）</title>
+  <!--
+    使用方式：
+    1) 這是單一 HTML 檔，直接存成 index.html，用瀏覽器開即可。
+    2) 今日目標：加入「回收桶」機制（軟刪除）。
+       - 刪除：卡片 → 移至回收桶（isDeleted=true, deletedAt=now）
+       - 還原：在回收桶列表中將項目復原
+       - 永久刪除：在回收桶中清除單一或全部
+       - 自動清除：超過 7 天的項目於啟動時自動清除
+    3) 與現有功能相容：搜尋 / 分類 / 排序 / 分頁 / RWD / EXIF（Day 15）。
+  -->
+  <style>
+    :root { --bg:#fff; --text:#1f2328; --muted:#6b7280; --primary:#ff8c42; --danger:#e11d48; --border:#e5e7eb; --card:#f9fafb; --shadow:rgba(0,0,0,.06); --overlay:rgba(0,0,0,.5); --focus:#2563eb; --radius:12px; --container:1200px; }
+    @media (prefers-color-scheme: dark){ :root { --bg:#0b1220; --text:#e5e7eb; --muted:#94a3b8; --primary:#ff954f; --danger:#fb7185; --border:#1f2937; --card:#0f172a; --shadow:rgba(0,0,0,.4); --overlay:rgba(0,0,0,.6); --focus:#60a5fa; } }
+
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans CJK TC","Microsoft JhengHei",Arial,sans-serif;line-height:1.65}
+    .container{max-width:var(--container);margin:0 auto;padding:24px;box-sizing:border-box}
+
+    header.site-header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fff7f1)}
+    @media(prefers-color-scheme:dark){header.site-header{background:linear-gradient(180deg,#0b1220,#0b1220)}}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand__logo{width:44px;height:44px;border-radius:10px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    .brand__title{margin:0;font-size:20px}
+    .brand__subtitle{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+    .toolbar{display:grid;gap:12px;margin-top:16px;align-items:center;grid-template-columns:1fr 220px 150px 150px 130px 130px 140px}
+    @media(max-width:990px){.toolbar{grid-template-columns:1fr 1fr 1fr}}
+    @media(max-width:640px){.toolbar{grid-template-columns:1fr}}
+    .toolbar input[type=text],.toolbar select,.toolbar button{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--text)}
+    .toolbar input[type=file]{padding:8px;border:1px solid var(--border);border-radius:10px;background:#fff}
+    .toolbar .btn{background:var(--primary);color:#fff;border:none;cursor:pointer;border-radius:10px;padding:10px 12px;font-weight:600}
+    .toolbar .btn.secondary{background:#fff0;color:var(--text);border:1px solid var(--border)}
+
+    .switcher{display:flex;gap:8px}
+    .switcher .tabbtn{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;cursor:pointer}
+    .switcher .tabbtn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:0 6px;border-radius:999px;background:var(--border);color:var(--muted);font-size:12px;margin-left:6px}
+
+    main.gallery{margin-top:18px}
+    .grid{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+    @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:990px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 2px 8px var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+    .thumb{aspect-ratio:4/3;background:#eef2f7;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .meta{padding:12px;display:grid;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .time{font-size:12px;color:var(--muted)}
+    .exif{font-size:12px;color:var(--muted)}
+    .tags{display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:#555;background:#fff}
+    .actions{display:flex;gap:8px}
+    .btn.small{padding:8px 10px;font-size:12px;border-radius:8px}
+    .btn.danger{background:var(--danger);color:#fff;border:none}
+
+    .statusbar{display:flex;align-items:center;justify-content:space-between;margin:8px 0 12px;color:var(--muted);font-size:13px}
+    .empty{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;color:var(--muted);display:flex;align-items:center;justify-content:center;grid-column:1/-1;background:#fff0}
+
+    .pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px}
+    .pager .btn{background:var(--primary);color:#fff;border:none;border-radius:12px;padding:12px 18px;cursor:pointer;font-weight:700}
+    .pager .btn[disabled]{opacity:.55;cursor:not-allowed}
+    .pager .hint{color:var(--muted);font-size:13px}
+
+    .modal-backdrop{position:fixed;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+    .modal{width:560px;max-width:720px;background:var(--bg);border-radius:var(--radius);border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden}
+    .modal__header{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800}
+    .modal__body{padding:16px;display:grid;gap:12px}
+    .modal__footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+    .field{display:grid;gap:6px}
+    .field label{font-size:13px;color:var(--muted)}
+    .field input[type=text],.field textarea,.field select{width:100%;box-sizing:border-box;padding:12px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--text)}
+    .field textarea{resize:vertical;min-height:90px}
+    .btn.secondary{background:#fff0;border:1px solid var(--border);color:var(--text)}
+    .btn.primary{background:var(--primary);color:#fff;border:none}
+  </style>
+  <!-- Day 15 承接：exif-js（若無法載入也不影響今天功能） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js" integrity="sha512-sSWq7J7V7x1Gk2YgG9XgVQwO4TtF2v3m7zq2jv1Wn0fS9zF+v4uE7wUuJ7c3OeJqf8i9mnnm2n6O1i8wCw3Wiw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 16）</h1>
+          <p class="brand__subtitle">回收桶：軟刪除／還原／自動清除（7 天）</p>
+        </div>
+      </div>
+
+      <div class="toolbar" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）" aria-label="搜尋">
+        <input id="fileInput" type="file" accept="image/*" multiple aria-label="上傳圖片">
+        <select id="categorySelect" aria-label="分類"></select>
+        <select id="sortBy" aria-label="排序依據">
+          <option value="time" selected>依時間</option>
+          <option value="title">依標題</option>
+        </select>
+        <select id="sortOrder" aria-label="升冪或降冪">
+          <option value="desc" selected>降冪</option>
+          <option value="asc">升冪</option>
+        </select>
+        <select id="pageSize" aria-label="每頁筆數">
+          <option value="8">每頁 8 張</option>
+          <option value="12" selected>每頁 12 張</option>
+          <option value="16">每頁 16 張</option>
+          <option value="24">每頁 24 張</option>
+        </select>
+        <div class="switcher" style="grid-column: 1 / -1;">
+          <button id="tabLibrary" class="tabbtn active" type="button">相簿</button>
+          <button id="tabTrash" class="tabbtn" type="button">回收桶 <span id="trashBadge" class="badge">0</span></button>
+        </div>
+        <div style="grid-column: 1 / -1; font-size:13px; color:var(--muted);">
+          提示：刪除的圖片會先到回收桶（保留 7 天）。在回收桶可「還原」或「永久刪除」。
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="gallery">
+    <div class="container">
+      <div class="statusbar" aria-live="polite">
+        <div><span id="countAll">0</span> 張照片</div>
+        <div>已顯示：<span id="countShown">0</span>／符合：<span id="countFiltered">0</span> 張</div>
+        <div id="trashHint" style="display:none;color:var(--muted);">回收桶中的項目會在 <strong id="autoPurgeDays">7</strong> 天後自動清除。</div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px;">
+        <button id="emptyTrashBtn" class="btn danger small" type="button" title="永久清空回收桶" style="display:none;">清空回收桶</button>
+        <button id="clearBtn" class="btn secondary small" type="button" title="清空全部資料">清空全部（含回收桶）</button>
+      </div>
+      <div id="grid" class="grid" aria-live="polite"></div>
+      <div class="pager">
+        <button id="loadMoreBtn" class="btn" type="button">載入更多</button>
+        <span class="hint" id="pagerHint"></span>
+      </div>
+    </div>
+  </main>
+
+  <!-- ====== Modal：編輯圖片中繼資料 ====== -->
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal" role="document" aria-labelledby="modalTitle">
+      <div class="modal__header" id="modalTitle">編輯圖片資訊</div>
+      <div class="modal__body">
+        <div class="field">
+          <label for="fTitle">標題</label>
+          <input id="fTitle" type="text" placeholder="例：台北小旅行" />
+        </div>
+        <div class="field">
+          <label for="fDesc">敘述</label>
+          <textarea id="fDesc" placeholder="簡短描述這張照片...（非必填）"></textarea>
+        </div>
+        <div class="field">
+          <label for="fTags">標籤（以逗號 , 分隔）</label>
+          <input id="fTags" type="text" placeholder="例：旅遊, 朋友, 晚上" />
+        </div>
+        <div class="field">
+          <label for="fCategory">分類</label>
+          <input id="fCategory" list="catList" type="text" placeholder="例：旅遊 / 生活 / 寵物" />
+          <datalist id="catList"></datalist>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button id="btnCancel" class="btn secondary" type="button">取消</button>
+        <button id="btnSave" class="btn primary" type="button">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container" style="border-top:1px solid var(--border); margin-top:24px; padding-top:16px; color:var(--muted); font-size:13px; text-align:center;">
+      Day 16 完成：回收桶（軟刪除／還原／自動清除 7 天）。
+    </div>
+  </footer>
+
+  <script>
+    // ============================
+    // Day 16：回收桶（軟刪除／還原／自動清除）
+    // ============================
+
+    const LS_KEY = 'pa_photos_v1';
+    const DAYS_TO_KEEP = 7; // 7 天自動清除
+    const MS_PER_DAY = 24*60*60*1000;
+
+    // 工具列
+    const fileInput = document.getElementById('fileInput');
+    const searchInput = document.getElementById('searchInput');
+    const categorySelect = document.getElementById('categorySelect');
+    const sortBySelect = document.getElementById('sortBy');
+    const sortOrderSelect = document.getElementById('sortOrder');
+    const pageSizeSelect = document.getElementById('pageSize');
+
+    // 分頁/顯示
+    const grid = document.getElementById('grid');
+    const clearBtn = document.getElementById('clearBtn');
+    const loadMoreBtn = document.getElementById('loadMoreBtn');
+    const pagerHint = document.getElementById('pagerHint');
+
+    const countAll = document.getElementById('countAll');
+    const countFiltered = document.getElementById('countFiltered');
+    const countShown = document.getElementById('countShown');
+
+    // 回收桶切換
+    const tabLibrary = document.getElementById('tabLibrary');
+    const tabTrash = document.getElementById('tabTrash');
+    const trashBadge = document.getElementById('trashBadge');
+    const emptyTrashBtn = document.getElementById('emptyTrashBtn');
+    const trashHint = document.getElementById('trashHint');
+    const autoPurgeDays = document.getElementById('autoPurgeDays');
+
+    // Modal
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const fTitle = document.getElementById('fTitle');
+    const fDesc = document.getElementById('fDesc');
+    const fTags = document.getElementById('fTags');
+    const fCategory = document.getElementById('fCategory');
+    const catList = document.getElementById('catList');
+    const btnCancel = document.getElementById('btnCancel');
+    const btnSave = document.getElementById('btnSave');
+
+    /** @type {{ id:string, dataUrl:string, name:string, lastModified:number, size:number, title:string, desc:string, tags:string[], category?:string, exif?: { dateTakenMs?: number|null, make?: string|null, model?: string|null, orientation?: number|null }, isDeleted?: boolean, deletedAt?: number|null }[]} */
+    let photos = [];
+    let editingId = null;
+    let query = '';
+    let currentCategory = '全部';
+    let sortBy = 'time';
+    let sortOrder = 'desc';
+    let pageSize = 12;
+    let visibleCount = pageSize;
+    let showTrash = false;
+
+    const DEFAULT_CAT = '未分類';
+
+    function uid(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+    function prettySize(bytes){const u=['B','KB','MB','GB'];let i=0,n=bytes;while(n>=1024&&i<u.length-1){n/=1024;i++}return `${n.toFixed(1)} ${u[i]}`}
+    function fileNameWithoutExt(name=''){const i=name.lastIndexOf('.');return i>0?name.slice(0,i):name||'未命名圖片'}
+
+    function safeGetLS(key){try{return localStorage.getItem(key)}catch(e){console.warn('讀取 LS 失敗',e);return null}}
+    function safeSetLS(key,val){try{localStorage.setItem(key,val);return true}catch(e){alert('儲存失敗，可能超過 LocalStorage 容量。');console.warn('寫入 LS 失敗',e);return false}}
+    function saveToStorage(){return safeSetLS(LS_KEY, JSON.stringify(photos))}
+    function loadFromStorage(){const raw=safeGetLS(LS_KEY);if(!raw) return [];try{const arr=JSON.parse(raw);if(Array.isArray(arr))return arr}catch(e){console.warn('解析 JSON 失敗',e)}return []}
+
+    // 分類
+    function getAllCategories(){const set=new Set();photos.forEach(p=>{ if(p.isDeleted) return; set.add((p.category&&p.category.trim())||DEFAULT_CAT)});set.add(DEFAULT_CAT);return Array.from(set).sort((a,b)=>a.localeCompare(b))}
+    function buildCategorySelect(){const cats=getAllCategories();const prev=currentCategory;categorySelect.innerHTML='';categorySelect.appendChild(new Option('全部','全部'));cats.forEach(c=>categorySelect.appendChild(new Option(c,c)));categorySelect.value=(cats.includes(prev)||prev==='全部')?prev:'全部';currentCategory=categorySelect.value}
+    function buildCategoryDatalist(){const cats=getAllCategories();catList.innerHTML='';cats.forEach(c=>{const opt=document.createElement('option');opt.value=c;catList.appendChild(opt)})}
+
+    // 搜尋 + 分類 + 回收桶視圖
+    function baseFilter(list){
+      const q=(query||'').trim().toLowerCase();
+      const tokens=q?q.split(/\s+/).filter(Boolean):[];
+      return list.filter(p=>{
+        const inTrash = !!p.isDeleted;
+        if(showTrash? !inTrash : inTrash) return false; // 視圖切換
+        const cat=(p.category&&p.category.trim())||DEFAULT_CAT;
+        if(!showTrash && currentCategory!=='全部' && cat!==currentCategory) return false;
+        if(!tokens.length) return true;
+        const hay=[p.title||'',p.desc||'',(p.tags||[]).join(' '),p.name||''].join(' ').toLowerCase();
+        return tokens.every(tok=>hay.includes(tok));
+      })
+    }
+
+    // 排序：時間或標題（時間用檔案 lastModified；若 Day 15 想改用 EXIF，可自行延伸）
+    function sortPhotos(list){
+      const arr=list.slice();
+      const order = sortOrder==='asc'?1:-1;
+      if(sortBy==='time'){
+        arr.sort((a,b)=>{const t1=Number(a.lastModified||0),t2=Number(b.lastModified||0);return (t1===t2?0:(t1>t2?1:-1))*order})
+      }else{
+        arr.sort((a,b)=>{const s1=(a.title||fileNameWithoutExt(a.name)).toLowerCase();const s2=(b.title||fileNameWithoutExt(b.name)).toLowerCase();if(s1===s2) return 0;return (s1>s2?1:-1)*order})
+      }
+      return arr
+    }
+
+    function getFilteredSorted(){return sortPhotos(baseFilter(photos))}
+    function getVisibleData(){return getFilteredSorted().slice(0, visibleCount)}
+
+    function updateCounters(){
+      const trashCount = photos.filter(p=>p.isDeleted).length;
+      trashBadge.textContent = String(trashCount);
+    }
+
+    function updatePagerUI(total){
+      const shown = Math.min(visibleCount, total);
+      countAll.textContent=String(photos.filter(p=>!p.isDeleted).length);
+      countFiltered.textContent=String(total);
+      countShown.textContent=String(shown);
+      const hasMore = shown < total;
+      loadMoreBtn.disabled = !hasMore;
+      pagerHint.textContent = hasMore ? `尚有 ${total - shown} 張未顯示` : (total===0 ? (showTrash?'回收桶沒有內容':'沒有符合的相片') : '已顯示全部');
+      // 回收桶專用 UI
+      emptyTrashBtn.style.display = showTrash ? 'inline-flex' : 'none';
+      trashHint.style.display = showTrash ? 'inline' : 'none';
+      autoPurgeDays.textContent = String(DAYS_TO_KEEP);
+    }
+
+    // 渲染
+    function fmt(dt){ const d=new Date(dt||Date.now()); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` }
+    function daysLeft(ts){ if(typeof ts!=="number") return null; const delta = (ts + DAYS_TO_KEEP*MS_PER_DAY) - Date.now(); return Math.ceil(delta / MS_PER_DAY); }
+
+    function render(){
+      const data = getVisibleData();
+      const total = getFilteredSorted().length;
+      updateCounters();
+      updatePagerUI(total);
+
+      const frag=document.createDocumentFragment();
+      if(data.length===0){
+        const empty=document.createElement('div'); empty.className='empty';
+        empty.textContent = showTrash ? '回收桶是空的。' : (photos.filter(p=>!p.isDeleted).length===0?'還沒有相片，請從上方上傳。':'沒有符合目前搜尋/分類的結果。');
+        frag.appendChild(empty);
+      }else{
+        data.forEach(p=>{
+          const card=document.createElement('article'); card.className='card'; card.dataset.id=p.id;
+          const thumb=document.createElement('div'); thumb.className='thumb';
+          const img=document.createElement('img'); img.src=p.dataUrl; img.alt=p.title||p.name; thumb.appendChild(img);
+          const meta=document.createElement('div'); meta.className='meta';
+          const titleRow=document.createElement('div'); titleRow.className='title-row';
+          const title=document.createElement('div'); title.className='title'; title.textContent=p.title||fileNameWithoutExt(p.name);
+
+          const btnRow=document.createElement('div'); btnRow.className='actions';
+          if(showTrash){
+            const restoreBtn=document.createElement('button'); restoreBtn.className='btn small'; restoreBtn.type='button'; restoreBtn.textContent='還原';
+            restoreBtn.addEventListener('click',()=>restorePhoto(p.id));
+            const delBtn=document.createElement('button'); delBtn.className='btn small danger'; delBtn.type='button'; delBtn.textContent='永久刪除';
+            delBtn.addEventListener('click',()=>permanentlyDelete(p.id));
+            btnRow.appendChild(restoreBtn); btnRow.appendChild(delBtn);
+          }else{
+            const editBtn=document.createElement('button'); editBtn.className='btn small'; editBtn.type='button'; editBtn.textContent='編輯'; editBtn.addEventListener('click',()=>openEditor(p.id));
+            const trashBtn=document.createElement('button'); trashBtn.className='btn small danger'; trashBtn.type='button'; trashBtn.textContent='刪除'; trashBtn.addEventListener('click',()=>moveToTrash(p.id));
+            btnRow.appendChild(editBtn); btnRow.appendChild(trashBtn);
+          }
+
+          titleRow.appendChild(title); titleRow.appendChild(btnRow);
+
+          const time=document.createElement('div'); time.className='time'; const dt=new Date(p.lastModified||Date.now());
+          const cat=(p.category&&p.category.trim())||DEFAULT_CAT;
+          time.textContent=`時間：${fmt(dt)}｜${prettySize(p.size||0)}｜分類：${cat}`;
+
+          // 回收桶剩餘天數
+          if(p.isDeleted){
+            const left = daysLeft(p.deletedAt);
+            const trashInfo=document.createElement('div'); trashInfo.className='time';
+            trashInfo.textContent = `回收桶：${fmt(p.deletedAt)}（剩餘 ${Math.max(0,left||0)} 天）`;
+            meta.appendChild(trashInfo);
+          }
+
+          const tagsWrap=document.createElement('div'); tagsWrap.className='tags'; (p.tags||[]).filter(Boolean).forEach(t=>{const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; tagsWrap.appendChild(chip)});
+
+          meta.appendChild(titleRow); meta.appendChild(time); meta.appendChild(tagsWrap);
+          card.appendChild(thumb); card.appendChild(meta); frag.appendChild(card);
+        })
+      }
+      grid.innerHTML=''; grid.appendChild(frag);
+    }
+
+    // 讀檔為 DataURL
+    function readFileAsDataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('讀檔失敗'));r.onload=()=>resolve(r.result);r.readAsDataURL(file)})}
+
+    // 移至回收桶 / 還原 / 永久刪除
+    function moveToTrash(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(p.isDeleted) return; p.isDeleted=true; p.deletedAt=Date.now(); saveToStorage(); render(); }
+    function restorePhoto(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(!p.isDeleted) return; p.isDeleted=false; p.deletedAt=null; saveToStorage(); render(); }
+    function permanentlyDelete(id){ const idx=photos.findIndex(x=>x.id===id); if(idx<0) return; if(confirm('此動作無法還原。確定永久刪除？')){ photos.splice(idx,1); saveToStorage(); render(); } }
+    function emptyTrash(){ if(!photos.some(p=>p.isDeleted)) return alert('回收桶目前是空的'); if(!confirm('將永久刪除回收桶內的所有項目，無法復原。要繼續嗎？')) return; photos = photos.filter(p=>!p.isDeleted); saveToStorage(); render(); }
+
+    // 啟動自動清除：移除超過 7 天的回收桶項目
+    function autoPurge(){ const limit = Date.now() - DAYS_TO_KEEP*MS_PER_DAY; const before = photos.length; photos = photos.filter(p=> !(p.isDeleted && typeof p.deletedAt==='number' && p.deletedAt < limit)); if(photos.length!==before){ saveToStorage(); } }
+
+    // 分頁與統計
+    function getFilteredSortedAll(){ return getFilteredSorted(); }
+    function updateAfterCriteriaChanged(){ visibleCount = pageSize; render(); }
+
+    // 事件：上傳
+    const fileInputHandler = async (e)=>{
+      const files=Array.from(e.target.files||[]); if(!files.length) return;
+      const images=files.filter(f=>f.type&&f.type.startsWith('image/'));
+      const nonImages=files.filter(f=>!f.type||!f.type.startsWith('image/'));
+      if(nonImages.length) alert('已略過非圖片檔案：\n'+nonImages.map(f=>'• '+f.name).join('\n'));
+      for(const file of images){
+        try{ const dataUrl=await readFileAsDataURL(file);
+          photos.push({id:uid(),dataUrl:String(dataUrl),name:file.name,lastModified:file.lastModified,size:file.size,title:fileNameWithoutExt(file.name),desc:'',tags:[],category:DEFAULT_CAT,isDeleted:false,deletedAt:null});
+        }catch(err){ console.warn('轉換 DataURL 失敗：',err) }
+      }
+      saveToStorage(); buildCategorySelect(); buildCategoryDatalist(); updateAfterCriteriaChanged(); fileInput.value='';
+    };
+
+    // 事件：清空全部（含回收桶）
+    clearBtn.addEventListener('click',()=>{ if(!photos.length) return; if(confirm('將刪除所有相片與回收桶內容（不可復原）。確定？')){ photos=[]; saveToStorage(); buildCategorySelect(); buildCategoryDatalist(); updateAfterCriteriaChanged(); } })
+    emptyTrashBtn.addEventListener('click', emptyTrash);
+
+    // 事件：搜尋 / 分類 / 排序 / 每頁筆數
+    searchInput.addEventListener('input',e=>{ query=e.target.value||''; updateAfterCriteriaChanged() })
+    categorySelect.addEventListener('change',e=>{ currentCategory=e.target.value; updateAfterCriteriaChanged() })
+    sortBySelect.addEventListener('change',e=>{ sortBy=e.target.value; updateAfterCriteriaChanged() })
+    sortOrderSelect.addEventListener('change',e=>{ sortOrder=e.target.value; updateAfterCriteriaChanged() })
+    pageSizeSelect.addEventListener('change',e=>{ pageSize=Number(e.target.value)||12; updateAfterCriteriaChanged() })
+
+    // 事件：載入更多
+    loadMoreBtn.addEventListener('click',()=>{ const total=getFilteredSortedAll().length; visibleCount=Math.min(visibleCount+pageSize, total); render() })
+
+    // 切換「相簿 / 回收桶」
+    function setTab(isTrash){ showTrash = !!isTrash; tabLibrary.classList.toggle('active', !showTrash); tabTrash.classList.toggle('active', showTrash); updateAfterCriteriaChanged(); }
+    tabLibrary.addEventListener('click',()=>setTab(false));
+    tabTrash.addEventListener('click',()=>setTab(true));
+
+    // ====== 編輯彈窗 ======
+    function openEditor(id){ const p=photos.find(x=>x.id===id); if(!p) return; if(p.isDeleted) return alert('回收桶中的項目不能編輯，請先還原。'); editingId=id; fTitle.value=p.title||fileNameWithoutExt(p.name); fDesc.value=p.desc||''; fTags.value=(p.tags||[]).join(', '); fCategory.value=(p.category&&p.category.trim())||DEFAULT_CAT; showModal(true); setTimeout(()=>fTitle.focus(),0) }
+    function showModal(show){ modalBackdrop.style.display=show?'flex':'none'; modalBackdrop.setAttribute('aria-hidden',show?'false':'true'); if(!show) editingId=null }
+    function saveEditor(){ const p=photos.find(x=>x.id===editingId); if(!p) return; p.title=fTitle.value.trim(); p.desc=fDesc.value.trim(); p.tags=fTags.value.split(',').map(s=>s.trim()).filter(Boolean); p.category=(fCategory.value||'').trim()||DEFAULT_CAT; saveToStorage(); buildCategorySelect(); buildCategoryDatalist(); render(); showModal(false) }
+    btnCancel.addEventListener('click',()=>showModal(false))
+    btnSave.addEventListener('click',saveEditor)
+    document.addEventListener('keydown',ev=>{ if(modalBackdrop.style.display==='flex' && ev.key==='Escape') showModal(false) })
+    modalBackdrop.addEventListener('click',ev=>{ if(ev.target===modalBackdrop) showModal(false) })
+
+    // ============================
+    // 自我測試（console）：驗證回收桶邏輯
+    // ============================
+    function runSelfTests(){
+      console.groupCollapsed('🔎 Self-tests for Day 16');
+      try{
+        const now=Date.now();
+        const mock=[
+          {id:'a',name:'a.jpg',title:'A',lastModified:1000,isDeleted:false,deletedAt:null},
+          {id:'b',name:'b.jpg',title:'B',lastModified:2000,isDeleted:true,deletedAt: now - 3*MS_PER_DAY},
+          {id:'c',name:'c.jpg',title:'C',lastModified:1500,isDeleted:true,deletedAt: now - 10*MS_PER_DAY}
+        ];
+        const prev=photos; photos = mock.map(x=>({...x,dataUrl:'',size:0,desc:'',tags:[],category:DEFAULT_CAT}));
+        // 1) 自動清除：c 應被清掉
+        autoPurge();
+        console.assert(!photos.some(p=>p.id==='c'),'超過 7 天的回收項目應被清除');
+        // 2) 視圖篩選
+        showTrash=false; let vis=baseFilter(photos); console.assert(vis.every(p=>!p.isDeleted),'相簿視圖不可含回收項目');
+        showTrash=true; vis=baseFilter(photos); console.assert(vis.every(p=>p.isDeleted),'回收桶視圖只應包含回收項目');
+        // 3) 還原 / 永久刪除
+        restorePhoto('b'); console.assert(!photos.find(p=>p.id==='b').isDeleted,'還原後 isDeleted=false');
+        moveToTrash('a'); console.assert(photos.find(p=>p.id==='a').isDeleted,'刪除後 isDeleted=true');
+        permanentlyDelete('a'); console.assert(!photos.find(p=>p.id==='a'),'永久刪除後應不存在');
+        photos = prev; // 還原
+        console.log('✅ 自我測試通過');
+      }catch(err){ console.error('❌ 自我測試失敗', err); }
+      console.groupEnd();
+    }
+
+    // 初始化
+    (function init(){
+      photos = loadFromStorage();
+      // 升級舊資料：補上 category / isDeleted / deletedAt 欄位
+      let patched=false; photos.forEach(p=>{ if(!('category' in p)) { p.category=DEFAULT_CAT; patched=true } if(!('isDeleted' in p)) { p.isDeleted=false; patched=true } if(!('deletedAt' in p)) { p.deletedAt=null; patched=true } }); if(patched) saveToStorage();
+      autoPurge(); // 啟動時清理過期回收桶
+      buildCategorySelect(); buildCategoryDatalist();
+      // 預設狀態
+      sortBy = sortBySelect.value; sortOrder = sortOrderSelect.value; pageSize = Number(pageSizeSelect.value)||12; visibleCount = pageSize; showTrash=false;
+      // 綁定上傳（最後綁，避免早期觸發）
+      fileInput.addEventListener('change', fileInputHandler);
+      render();
+      runSelfTests();
+      console.log('✅ Day 16：回收桶已啟用。照片數：', photos.length);
+    })();
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+

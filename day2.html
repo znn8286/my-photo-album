@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Day 2 — 線上相簿：CSS 美化＆Header</title>
+  <meta name="description" content="30 天打造線上相簿：Day 2 CSS 美化。設定字體、背景、排版、Header。" />
+  <style>
+    /* =====================================
+       Day 2：CSS 美化（字體、背景、排版、Header）
+       - 在 Day 1 骨架上，補齊視覺與排版
+       - 仍使用單檔示範（HTML+CSS+JS）
+       ===================================== */
+
+    /* ---- 主題變數 ---- */
+    :root {
+      --bg: #f8fafc;        /* 頁面背景（淡灰藍） */
+      --panel: #ffffff;      /* 卡片底色 */
+      --text: #1f2937;       /* 主要文字 */
+      --muted: #6b7280;      /* 次要文字 */
+      --primary: #ff7a1a;    /* 主色 */
+      --accent: #ffc188;     /* 輔助色 */
+      --border: #e5e7eb;     /* 邊框 */
+      --radius: 18px;        /* 圓角 */
+      --shadow: 0 8px 24px rgba(17, 24, 39, 0.06);
+      --maxw: 1100px;        /* 內容最大寬度 */
+    }
+
+    /* ---- Reset（簡） ---- */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Noto Sans, "Microsoft JhengHei", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 400px at 10% -10%, color-mix(in oklab, var(--accent) 28%, transparent), transparent 60%),
+        radial-gradient(1200px 400px at 110% 10%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 60%),
+        var(--bg);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    img { display: block; max-width: 100%; height: auto; }
+    a { color: inherit; text-decoration: none; }
+
+    /* ---- Header ---- */
+    header {
+      position: sticky; top: 0; z-index: 20;
+      backdrop-filter: saturate(1.2) blur(10px);
+      background: color-mix(in oklab, #fff 92%, transparent);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav {
+      max-width: var(--maxw);
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
+    }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 900; letter-spacing: .3px; }
+    .brand .logo {
+      width: 34px; height: 34px; border-radius: 10px;
+      background: conic-gradient(from 200deg, var(--primary), var(--accent));
+      box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    }
+    .brand .title { font-size: clamp(18px, 2.2vw, 22px); color: var(--text); }
+    .brand .title b { color: var(--primary); }
+
+    .nav .sub { justify-self: center; color: var(--muted); font-size: 14px; }
+
+    .nav .actions { display: inline-flex; gap: 10px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 14px; border-radius: 12px; border: 1px solid var(--border);
+      background: #fff; box-shadow: 0 1px 0 rgba(0,0,0,.03);
+      font-weight: 600; font-size: 14px; color: var(--text);
+      cursor: pointer; transition: transform .06s ease, box-shadow .2s ease;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,.06); }
+    .btn.primary { background: var(--primary); color: #fff; border-color: color-mix(in oklab, var(--primary) 60%, #0000); }
+
+    /* ---- 主內容容器 ---- */
+    main { max-width: var(--maxw); margin: 26px auto 64px; padding: 0 20px; }
+
+    .hero { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 26px; }
+    .hero h1 { margin: 0 0 6px; font-size: clamp(24px, 3.4vw, 36px); }
+    .hero p { margin: 0; color: var(--muted); }
+
+    .grid { display: grid; gap: 18px; grid-template-columns: 1fr; margin-top: 18px; }
+    @media (min-width: 860px) { .grid { grid-template-columns: 1.2fr 1fr; } }
+
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 18px; }
+    .card h2 { margin: 0 0 8px; font-size: clamp(18px, 2.4vw, 22px); }
+    .card p { margin: 8px 0 0; color: var(--muted); }
+    .list { margin: 10px 0 0; padding-left: 20px; }
+
+    /* ---- 預留功能位（將在 Day 3~7 用到） ---- */
+    .toolbar { border: 1px dashed var(--border); border-radius: 14px; padding: 16px; color: var(--muted); background: #fff; }
+    .gallery { border: 1px dashed var(--border); border-radius: 14px; padding: 16px; color: var(--muted); background: #fff; min-height: 120px; display: grid; place-items: center; text-align: center; }
+
+    /* ---- 小元素 ---- */
+    code { background: #fff4ec; padding: 2px 6px; border-radius: 6px; border: 1px solid #ffe2cc; }
+    .tip { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; color: #fff; background: var(--primary); }
+
+    /* ---- 頁尾 ---- */
+    footer { color: var(--muted); font-size: 13px; text-align: center; margin: 16px 0 36px; }
+  </style>
+</head>
+<body>
+  <!-- Header：品牌 + 副標 + 按鈕（僅造型，功能將於後續天數補上） -->
+  <header>
+    <nav class="nav" aria-label="主導覽">
+      <div class="brand" aria-label="網站名稱">
+        <div class="logo" aria-hidden="true"></div>
+        <div class="title">線上相簿 · <b>30 天計畫</b></div>
+      </div>
+      <div class="sub">Day 2：CSS 美化（字體 / 背景 / 排版 / Header）</div>
+      <div class="actions">
+        <button class="btn" title="尚未實作（將在後續完成）">說明</button>
+        <button class="btn primary" title="尚未實作（將在後續完成）">開始上傳</button>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="title">
+      <span class="tip" aria-hidden="true">Day 2</span>
+      <h1 id="title">完成全站視覺基礎，為互動功能做準備</h1>
+      <p>今天把字體、背景、排版與 Header 做好。接著 Day 3 會把 <code>&lt;input type="file"&gt;</code> 放上來，支援圖片上傳與預覽。</p>
+    </section>
+
+    <section class="grid" aria-label="內容區塊">
+      <article class="card" aria-labelledby="plan">
+        <h2 id="plan">這一階段的目標（Day 1 ~ Day 7）</h2>
+        <ol class="list">
+          <li>Day 1：專案初始化（已完成）</li>
+          <li><b>Day 2：CSS 美化（正在這裡）</b></li>
+          <li>Day 3：圖片上傳與預覽（<code>&lt;input type="file"&gt;</code>）</li>
+          <li>Day 4：圖片壓縮（<code>&lt;canvas&gt;</code> 縮圖/壓縮）</li>
+          <li>Day 5：相簿展示區（Grid 版面，動態加入）</li>
+          <li>Day 6：圖片資訊（大小 / 上傳時間）</li>
+          <li>Day 7：多圖片上傳（一次選多張）</li>
+        </ol>
+      </article>
+
+      <aside class="card" aria-labelledby="files">
+        <h2 id="files">檔案結構</h2>
+          <li><strong>Header：</strong>標誌、標題、動作按鈕（樣式就緒）</li>
+          <li><strong>Toolbar：</strong><em>Day 3 掛載上傳元件</em></li>
+          <li><strong>Gallery：</strong><em>Day 5 顯示圖片卡片</em></li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="card" aria-labelledby="skeleton" style="margin-top: 18px;">
+      <h2 id="skeleton">預留互動區（之後會注入功能）</h2>
+      <div class="toolbar" aria-live="polite"> <strong>Toolbar</strong>：Day 3 會加入 <code>&lt;input type="file" multiple&gt;</code> 與預覽。</div>
+      <div style="height: 12px"></div>
+      <div class="gallery" aria-live="polite"> <strong>Gallery</strong>：Day 5 開始以 Grid 呈現圖片卡片。</div>
+    </section>
+  </main>
+
+  <footer>© 2025 線上相簿教學 · Day 2 視覺基礎完成</footer>
+
+  <script>
+    // Day 2：目前尚無互動邏輯，保留 App 狀態以利後續擴充
+    const App = {
+      day: 2,
+      state: { photos: [] }, // Day 5 會使用
+    };
+    console.log('%c Day 2：CSS 美化完成，等待 Day 3 接入上傳功能', 'padding:6px 10px;border:1px solid #eee;border-radius:8px');
+  </script>
+</body>
+</html>

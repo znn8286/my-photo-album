@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day 24｜線上相簿 - 分享連結（ID 對應／訪客檢視）</title>
+  <!--
+    使用方式：
+    1) 這是單一 HTML 檔，直接存成 index.html 開啟。
+    2) 今天目標：
+       - 為每張照片產生「分享連結」（以隨機 token 對應一份**快照**）。
+       - 造訪 ?share=<token> 時，顯示「訪客模式」頁面（唯讀）。
+    3) 實作細節：
+       - 所有資料用 LocalStorage 模擬（無後端）。
+       - Share 內容為**快照**（包含 dataUrl / 中繼資料），因此不同裝置也能開（不依賴原作者的 LocalStorage）。
+       - 卡片提供：分享、複製連結、取消分享（撤銷）。
+    4) 延伸：未來可改為呼叫 Day 23 的 API 建立/查詢分享紀錄。
+  -->
+  <style>
+    :root{ --bg:#ffffff; --elev:#f9fafb; --text:#1f2328; --muted:#6b7280; --primary:#ff8c42; --danger:#e11d48; --border:#e5e7eb; --radius:14px; --shadow:0 8px 24px rgba(17,24,39,.12) }
+    @media(prefers-color-scheme:dark){ :root{ --bg:#0b1220; --elev:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --primary:#ff954f; --danger:#fb7185; --border:#1f2937; --shadow:0 10px 30px rgba(0,0,0,.35) } }
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans CJK TC","Microsoft JhengHei",Arial,sans-serif;line-height:1.65}
+    .container{max-width:1100px;margin:0 auto;padding:24px;box-sizing:border-box}
+    header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fff7f1)}
+    @media(prefers-color-scheme:dark){header{background:linear-gradient(180deg,#0b1220,#0b1220)}}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand__logo{width:44px;height:44px;border-radius:10px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    .brand__title{margin:0;font-size:20px}
+    .brand__subtitle{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+    .toolbar{display:grid;gap:12px;margin-top:16px;align-items:center;grid-template-columns:1fr 220px}
+    @media(max-width:900px){.toolbar{grid-template-columns:1fr}}
+    .toolbar input,.toolbar button{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+    .toolbar input[type=file]{padding:8px}
+    .btn{cursor:pointer;border-radius:10px}
+    .btn.primary{background:var(--primary);color:#fff;border:none}
+    .btn.secondary{background:#fff0;border:1px solid var(--border)}
+    .btn.danger{background:var(--danger);color:#fff;border:none}
+    .btn.small{padding:8px 10px;font-size:12px}
+
+    main{padding:24px 0}
+    .grid{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+    @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--elev);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+    .thumb{aspect-ratio:4/3;background:#eef2f7;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .meta{padding:12px;display:grid;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .title{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .time{font-size:12px;color:var(--muted)}
+    .tags{display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:#555;background:#fff0}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+
+    /* 訪客模式（單張檢視） */
+    .viewer{display:grid;gap:16px;grid-template-columns: 1.2fr 1fr}
+    @media(max-width:900px){.viewer{grid-template-columns:1fr}}
+    .viewer .big{background:var(--elev);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+    .viewer .big img{width:100%;height:auto;display:block}
+    .viewer .info{background:var(--elev);border:1px solid var(--border);border-radius:16px;padding:16px;display:grid;gap:10px}
+    .viewer h2{margin:0}
+    .muted{color:var(--muted)}
+    .pill{display:inline-flex;align-items:center;padding:2px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 24）</h1>
+          <p class="brand__subtitle">分享連結（ID → 快照；?share=TOKEN 為訪客模式）</p>
+        </div>
+      </div>
+
+      <div id="toolbar" class="toolbar" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）" aria-label="搜尋">
+        <input id="fileInput" type="file" accept="image/*" multiple aria-label="上傳圖片">
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <div id="ownerView">
+        <div class="statusbar" style="display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin-bottom:10px">
+          <div>照片總數：<span id="countAll">0</span></div>
+          <div>符合：<span id="countFiltered">0</span>｜已顯示：<span id="countShown">0</span></div>
+        </div>
+        <div id="grid" class="grid" aria-live="polite"></div>
+      </div>
+
+      <div id="visitorView" style="display:none">
+        <div class="pill" style="margin-bottom:12px">訪客模式（唯讀）</div>
+        <div class="viewer">
+          <div class="big"><img id="vImg" alt="shared" /></div>
+          <div class="info">
+            <h2 id="vTitle">—</h2>
+            <div class="muted" id="vMeta">—</div>
+            <div id="vDesc">—</div>
+            <div id="vTags" class="tags"></div>
+            <div class="muted">來源：本頁為作者分享的靜態快照。</div>
+            <div><button id="btnVisitHome" class="btn secondary" type="button">回到主頁</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 編輯 Modal（簡版） -->
+  <div id="modalBackdrop" class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px">
+    <div class="modal" role="document" aria-labelledby="modalTitle" style="width:560px;max-width:720px;background:var(--bg);border-radius:14px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden">
+      <div class="modal__header" id="modalTitle" style="padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800">編輯圖片資訊</div>
+      <div class="modal__body" style="padding:16px;display:grid;gap:12px">
+        <div class="field"><label for="fTitle" class="muted" style="font-size:13px">標題</label><input id="fTitle" type="text" style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)" placeholder="例：台北小旅行" /></div>
+        <div class="field"><label for="fDesc" class="muted" style="font-size:13px">敘述</label><textarea id="fDesc" style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text);min-height:90px"></textarea></div>
+        <div class="field"><label for="fTags" class="muted" style="font-size:13px">標籤（逗號分隔）</label><input id="fTags" type="text" style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)" placeholder="旅遊, 朋友, 晚上" /></div>
+      </div>
+      <div class="modal__footer" style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
+        <button id="btnCancel" class="btn secondary" type="button">取消</button>
+        <button id="btnSave" class="btn primary" type="button">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // ============================
+  // Day 24：分享連結（ID 對應／訪客檢視）
+  // ============================
+
+  // LocalStorage Keys
+  const LS_PHOTOS = 'pa_photos_v1'; // 與先前相容
+  const LS_SHARES = 'pa_shares_v1'; // { token: { createdAt, snapshot: PhotoSnapshot } }
+
+  // UI
+  const fileInput = document.getElementById('fileInput');
+  const searchInput = document.getElementById('searchInput');
+  const grid = document.getElementById('grid');
+  const countAll = document.getElementById('countAll');
+  const countFiltered = document.getElementById('countFiltered');
+  const countShown = document.getElementById('countShown');
+
+  const toolbar = document.getElementById('toolbar');
+  const ownerView = document.getElementById('ownerView');
+  const visitorView = document.getElementById('visitorView');
+  const vImg = document.getElementById('vImg');
+  const vTitle = document.getElementById('vTitle');
+  const vMeta = document.getElementById('vMeta');
+  const vDesc = document.getElementById('vDesc');
+  const vTags = document.getElementById('vTags');
+  const btnVisitHome = document.getElementById('btnVisitHome');
+
+  // Modal (簡版)
+  const modalBackdrop = document.getElementById('modalBackdrop');
+  const fTitle = document.getElementById('fTitle');
+  const fDesc = document.getElementById('fDesc');
+  const fTags = document.getElementById('fTags');
+  const btnCancel = document.getElementById('btnCancel');
+  const btnSave = document.getElementById('btnSave');
+
+  // 狀態
+  /** @typedef {{ id:string, dataUrl:string, name:string, lastModified:number, size:number, title:string, desc:string, tags:string[] }} Photo */
+  /** @type {Photo[]} */
+  let photos = [];
+  let query = '';
+  let editingId = null;
+
+  function uid(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+  function prettySize(bytes){const u=['B','KB','MB','GB'];let i=0,n=bytes;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(1)+' '+u[i]}
+  function fileNameWithoutExt(name){if(typeof name!=='string') return 'image'; const i=name.lastIndexOf('.'); return i>0? name.slice(0,i): (name||'image')}
+  function fmtFull(ts){const d=new Date(ts||Date.now()); function pad(n){return String(n).padStart(2,'0')} return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
+
+  // Storage helpers
+  function safeGetLS(key){try{return localStorage.getItem(key)}catch(e){return null}}
+  function safeSetLS(key,val){try{localStorage.setItem(key,val);return true}catch(e){alert('LocalStorage 寫入失敗');return false}}
+  function loadPhotos(){const raw=safeGetLS(LS_PHOTOS); if(!raw) return []; try{const arr=JSON.parse(raw); return Array.isArray(arr)?arr:[]}catch(e){return []}}
+  function savePhotos(){return safeSetLS(LS_PHOTOS, JSON.stringify(photos))}
+  function loadShares(){const raw=safeGetLS(LS_SHARES); if(!raw) return {}; try{const obj=JSON.parse(raw); return obj && typeof obj==='object'? obj: {} }catch(e){return {}}}
+  function saveShares(map){return safeSetLS(LS_SHARES, JSON.stringify(map))}
+
+  // 讀檔為 DataURL
+  function readFileAsDataURL(file){return new Promise(function(resolve,reject){const r=new FileReader(); r.onerror=function(){reject(new Error('讀檔失敗'))}; r.onload=function(){resolve(r.result)}; r.readAsDataURL(file); })}
+
+  // ====== Owner 視圖：渲染 ======
+  function baseFilter(list){ const q=(query||'').trim().toLowerCase(); if(!q) return list.slice(); const tokens=q.split(/\s+/).filter(function(s){return !!s}); return list.filter(function(p){ const hay=[p.title||'', p.desc||'', (p.tags||[]).join(' '), p.name||''].join(' ').toLowerCase(); return tokens.every(function(tok){return hay.indexOf(tok)>=0}); }) }
+  function render(){ const data=baseFilter(photos); const frag=document.createDocumentFragment(); if(data.length===0){ const empty=document.createElement('div'); empty.className='card'; empty.style.padding='20px'; empty.textContent = photos.length? '沒有符合的結果。':'尚無照片，請先上傳。'; frag.appendChild(empty); } else { data.forEach(function(p){ const card=document.createElement('article'); card.className='card'; card.dataset.id=p.id; const th=document.createElement('div'); th.className='thumb'; const img=document.createElement('img'); img.src=p.dataUrl; img.alt=p.title||p.name; th.appendChild(img); const meta=document.createElement('div'); meta.className='meta'; const titleRow=document.createElement('div'); titleRow.className='title-row'; const title=document.createElement('div'); title.className='title'; title.textContent=p.title||fileNameWithoutExt(p.name); const btnRow=document.createElement('div'); btnRow.className='actions'; const editBtn=document.createElement('button'); editBtn.className='btn small'; editBtn.type='button'; editBtn.textContent='編輯'; editBtn.addEventListener('click',function(){ openEditor(p.id); }); const shareBtn=document.createElement('button'); shareBtn.className='btn small primary'; shareBtn.type='button'; shareBtn.textContent='分享'; shareBtn.addEventListener('click',function(){ onShare(p.id); }); const copyBtn=document.createElement('button'); copyBtn.className='btn small secondary'; copyBtn.type='button'; copyBtn.textContent='複製連結'; copyBtn.addEventListener('click',function(){ copyShareLink(p.id); }); const revokeBtn=document.createElement('button'); revokeBtn.className='btn small danger'; revokeBtn.type='button'; revokeBtn.textContent='取消分享'; revokeBtn.addEventListener('click',function(){ revokeShare(p.id); }); btnRow.appendChild(editBtn); btnRow.appendChild(shareBtn); btnRow.appendChild(copyBtn); btnRow.appendChild(revokeBtn); titleRow.appendChild(title); titleRow.appendChild(btnRow); const time=document.createElement('div'); time.className='time'; time.textContent='時間：'+fmtFull(p.lastModified)+'｜'+prettySize(p.size||0); const tagsWrap=document.createElement('div'); tagsWrap.className='tags'; (p.tags||[]).forEach(function(t){ const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; tagsWrap.appendChild(chip); }); const shareLine=document.createElement('div'); shareLine.className='time'; const token=getShareTokenByPhotoId(p.id); if(token){ const a=document.createElement('a'); a.href=buildShareUrl(token); a.textContent='已分享：'+a.href; a.target='_blank'; shareLine.appendChild(a); } else { shareLine.textContent='尚未分享'; } meta.appendChild(titleRow); meta.appendChild(time); meta.appendChild(tagsWrap); meta.appendChild(shareLine); card.appendChild(th); card.appendChild(meta); frag.appendChild(card); }); } grid.innerHTML=''; grid.appendChild(frag); countAll.textContent=String(photos.length); const filtered=baseFilter(photos).length; countFiltered.textContent=String(filtered); countShown.textContent=String(filtered); }
+
+  // ====== 分享功能（Owner） ======
+  function getShareMap(){ return loadShares(); }
+  function getShareTokenByPhotoId(photoId){ const map=getShareMap(); for(const k in map){ if(Object.prototype.hasOwnProperty.call(map,k)){ const rec=map[k]; if(rec && rec.snapshot && rec.snapshot.id===photoId){ return k; } } } return null; }
+  function buildShareUrl(token){ const base=location.origin + location.pathname; return base + '?share=' + encodeURIComponent(token); }
+  function onShare(id){ const p=photos.find(function(x){return x.id===id}); if(!p) return; let token=getShareTokenByPhotoId(id); const map=getShareMap(); if(!token){ token='sh_'+uid(); const snap={ id:p.id, dataUrl:p.dataUrl, name:p.name, lastModified:p.lastModified, size:p.size, title:p.title, desc:p.desc, tags:Array.isArray(p.tags)? p.tags.slice():[] }; map[token]={ createdAt: Date.now(), snapshot: snap }; saveShares(map); } const url=buildShareUrl(token); openShareDialog(url); render(); }
+  function openShareDialog(url){ const ok = confirm('已產生分享連結：\n\n'+url+'\n\n是否複製到剪貼簿？'); if(ok){ copyText(url); alert('已複製分享連結！'); } }
+  function copyShareLink(id){ const token=getShareTokenByPhotoId(id); if(!token){ alert('尚未分享，請先點「分享」產生連結。'); return; } const url=buildShareUrl(token); copyText(url); alert('已複製分享連結！'); }
+  function revokeShare(id){ const token=getShareTokenByPhotoId(id); if(!token){ alert('此照片目前沒有分享連結。'); return; } const map=getShareMap(); if(confirm('取消分享後，任何持有連結者將無法再瀏覽。確定取消？')){ delete map[token]; saveShares(map); render(); alert('已取消分享。'); } }
+  function copyText(text){ navigator.clipboard && navigator.clipboard.writeText? navigator.clipboard.writeText(text) : (function(){ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); }catch(e){} ta.remove(); })(); }
+
+  // ====== 訪客模式（?share=TOKEN） ======
+  function getQueryParam(name){ const u=new URL(location.href); return u.searchParams.get(name); }
+  function showVisitor(token){ const map=getShareMap(); const rec=map[token]; if(!rec || !rec.snapshot){ ownerView.style.display='none'; toolbar.style.display='none'; visitorView.style.display='block'; const wrap=document.createElement('div'); wrap.textContent='連結已失效或不存在。'; visitorView.innerHTML=''; visitorView.appendChild(wrap); return; } const p=rec.snapshot; ownerView.style.display='none'; toolbar.style.display='none'; visitorView.style.display='block'; vImg.src=p.dataUrl; vTitle.textContent=p.title || fileNameWithoutExt(p.name); vMeta.textContent='時間：'+fmtFull(p.lastModified)+'｜'+prettySize(p.size||0); vDesc.textContent=p.desc || '—'; vTags.innerHTML=''; (p.tags||[]).forEach(function(t){ const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; vTags.appendChild(chip); }); }
+
+  // ====== 編輯 Modal（Owner） ======
+  function openEditor(id){ const p=photos.find(function(x){return x.id===id}); if(!p) return; editingId=id; fTitle.value=p.title||fileNameWithoutExt(p.name); fDesc.value=p.desc||''; fTags.value=(p.tags||[]).join(', '); showModal(true); setTimeout(function(){ fTitle.focus(); }, 0); }
+  function showModal(show){ modalBackdrop.style.display = show? 'flex':'none'; modalBackdrop.setAttribute('aria-hidden', show? 'false': 'true'); if(!show) editingId=null; }
+  async function saveEditor(){ const p=photos.find(function(x){return x.id===editingId}); if(!p) return; p.title=String(fTitle.value||'').trim(); p.desc=String(fDesc.value||'').trim(); p.tags=String(fTags.value||'').split(',').map(function(s){return s.trim();}).filter(Boolean); savePhotos(); render(); showModal(false); // 若此照片已分享，更新快照
+    const token=getShareTokenByPhotoId(p.id); if(token){ const map=getShareMap(); const snap={ id:p.id, dataUrl:p.dataUrl, name:p.name, lastModified:p.lastModified, size:p.size, title:p.title, desc:p.desc, tags:Array.isArray(p.tags)? p.tags.slice():[] }; map[token]={ createdAt: map[token].createdAt, snapshot: snap }; saveShares(map); }
+  }
+  btnCancel.addEventListener('click', function(){ showModal(false); });
+  btnSave.addEventListener('click', saveEditor);
+  modalBackdrop.addEventListener('click', function(ev){ if(ev.target===modalBackdrop) showModal(false); });
+  document.addEventListener('keydown', function(ev){ if(modalBackdrop.style.display==='flex' && ev.key==='Escape') showModal(false); });
+
+  // ====== 上傳（Owner） ======
+  fileInput.addEventListener('change', async function(e){ const files=Array.prototype.slice.call(e.target.files||[]); if(!files.length) return; const images=files.filter(function(f){return f.type && f.type.indexOf('image/')===0}); const non=files.filter(function(f){return !f.type || f.type.indexOf('image/')!==0}); if(non.length) alert('已略過非圖片檔案:\n'+non.map(function(f){return '• '+f.name}).join('\n')); for(let i=0;i<images.length;i++){ const file=images[i]; try{ const dataUrl=await readFileAsDataURL(file); const photo={ id: uid(), dataUrl: String(dataUrl), name: file.name, lastModified: file.lastModified, size: file.size, title: fileNameWithoutExt(file.name), desc: '', tags: [] }; photos.push(photo); }catch(err){ console.warn('轉換 DataURL 失敗：', err); } } savePhotos(); e.target.value=''; render(); });
+
+  // ====== 搜尋（Owner） ======
+  searchInput.addEventListener('input', function(e){ query=e.target.value||''; render(); });
+
+  // ====== 自我測試 ======
+  function runSelfTests(){ console.groupCollapsed('🔎 Self-tests for Day 24 (Share)'); try{ // 建立假資料
+      const snap = { id:'p1', dataUrl:'data:image/png;base64,iVBORw0KGgo=', name:'t.png', lastModified:123, size:1, title:'T', desc:'D', tags:['a','b'] };
+      const map0 = loadShares(); const token = 'sh_test_'+uid(); map0[token] = { createdAt: Date.now(), snapshot: snap }; saveShares(map0);
+      const map1 = loadShares(); console.assert(map1[token] && map1[token].snapshot && map1[token].snapshot.id==='p1', '分享快照已寫入');
+      // 反查照片 id → token
+      function findById(pid){ let got=null; for(const k in map1){ if(Object.prototype.hasOwnProperty.call(map1,k)){ if(map1[k] && map1[k].snapshot && map1[k].snapshot.id===pid){ got=k; break; } } } return got; }
+      console.assert(findById('p1')===token, '可由照片 id 反查 token');
+      // 取消分享
+      delete map1[token]; saveShares(map1); const map2 = loadShares(); console.assert(!map2[token], '取消分享成功');
+      console.log('✅ 自我測試通過');
+    }catch(err){ console.error('❌ 自我測試失敗', err); } console.groupEnd(); }
+
+  // ====== 初始化 ======
+  (function init(){ const shareToken=getQueryParam('share'); if(shareToken){ showVisitor(shareToken); } else { photos=loadPhotos(); render(); } btnVisitHome.addEventListener('click', function(){ const base=location.origin+location.pathname; location.href=base; }); runSelfTests(); })();
+  </script>
+</body>
+</html>
+

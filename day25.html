@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day 25｜線上相簿 - 基本登入（LocalStorage 使用者 / SHA-256 雜湊）</title>
+  <!--
+    使用方式：
+    1) 這是「單一 HTML 檔」，直接存成 index.html 打開即可。
+    2) 今日目標：在前端用 LocalStorage 模擬帳號系統：
+       - 註冊：email + 密碼 → 產生 salt + SHA-256 雜湊儲存（不存明碼）。
+       - 登入：驗證雜湊是否相符。
+       - 登出：清除目前會話。
+       - 每位使用者有**獨立的相片空間**（以 email 命名空間）。
+    3) 與前幾天相容：延用最基本的「上傳 / 檢視清單」；登入後才可操作。
+    4) 自我測試：啟動時在 console 執行雜湊／註冊／登入測試，不污染真資料。
+
+    注意：這是教學用範例，純前端模擬，請勿用於正式環境。
+  -->
+  <style>
+    :root{ --bg:#ffffff; --elev:#f9fafb; --text:#1f2328; --muted:#6b7280; --primary:#ff8c42; --danger:#e11d48; --border:#e5e7eb; --radius:14px; --shadow:0 8px 24px rgba(17,24,39,.12) }
+    @media(prefers-color-scheme:dark){ :root{ --bg:#0b1220; --elev:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --primary:#ff954f; --danger:#fb7185; --border:#1f2937; --shadow:0 10px 30px rgba(0,0,0,.35) } }
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans CJK TC","Microsoft JhengHei",Arial,sans-serif;line-height:1.65}
+    .container{max-width:1100px;margin:0 auto;padding:24px;box-sizing:border-box}
+    header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fff7f1)}
+    @media(prefers-color-scheme:dark){header{background:linear-gradient(180deg,#0b1220,#0b1220)}}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand__logo{width:44px;height:44px;border-radius:10px;background:var(--primary);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    .brand__title{margin:0;font-size:20px}
+    .brand__subtitle{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+    /* Auth */
+    .auth{display:grid;gap:12px;max-width:520px;margin:18px auto;padding:18px;background:var(--elev);border:1px solid var(--border);border-radius:16px}
+    .auth h2{margin:4px 0 8px 0}
+    .field{display:grid;gap:6px}
+    .field label{font-size:13px;color:var(--muted)}
+    .field input[type=text], .field input[type=email], .field input[type=password]{padding:12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+    .auth .actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+    .btn{cursor:pointer;border-radius:10px}
+    .btn.primary{background:var(--primary);color:#fff;border:none;padding:10px 14px}
+    .btn.secondary{background:#fff0;border:1px solid var(--border);padding:10px 14px}
+    .btn.danger{background:var(--danger);color:#fff;border:none;padding:10px 14px}
+    .muted{color:var(--muted)}
+    .error{color:#b91c1c;font-size:13px}
+    .ok{color:#15803d;font-size:13px}
+
+    /* Gallery (登入後) */
+    .toolbar{display:grid;gap:12px;margin-top:16px;align-items:center;grid-template-columns:1fr 220px auto}
+    @media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}}
+    @media(max-width:640px){.toolbar{grid-template-columns:1fr}}
+    .toolbar input[type=text],.toolbar button,.toolbar input[type=file]{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff0;color:var(--text)}
+    .toolbar .btn.logout{justify-self:end}
+
+    main{padding:24px 0}
+    .grid{display:grid;gap:16px;grid-template-columns:repeat(4,1fr)}
+    @media(max-width:1200px){.grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--elev);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+    .thumb{aspect-ratio:4/3;background:#eef2f7;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .meta{padding:12px;display:grid;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .title{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .time{font-size:12px;color:var(--muted)}
+    .tags{display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:#555;background:#fff0}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">PA</div>
+        <div>
+          <h1 class="brand__title">線上相簿（Day 25）</h1>
+          <p class="brand__subtitle">基本登入（LocalStorage 使用者 / SHA-256 雜湊），每位使用者擁有獨立資料空間</p>
+        </div>
+      </div>
+
+      <div id="authedToolbar" class="toolbar" style="display:none" role="region" aria-label="工具列">
+        <input id="searchInput" type="text" placeholder="搜尋關鍵字（標題／敘述／標籤／檔名）" aria-label="搜尋">
+        <input id="fileInput" type="file" accept="image/*" multiple aria-label="上傳圖片">
+        <button id="logoutBtn" class="btn secondary logout" type="button">登出</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <!-- 未登入：登入/註冊卡片 -->
+      <section id="authSection" class="auth" aria-live="polite">
+        <h2>登入你的相簿</h2>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" placeholder="you@example.com" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label for="password">密碼</label>
+          <input id="password" type="password" placeholder="至少 8 碼" autocomplete="current-password" />
+        </div>
+        <div id="registerExtras" class="field" style="display:none">
+          <label for="password2">確認密碼</label>
+          <input id="password2" type="password" placeholder="再次輸入密碼" autocomplete="new-password" />
+        </div>
+        <div id="authMsg" class="muted"></div>
+        <div class="actions">
+          <button id="toggleModeBtn" class="btn secondary" type="button">切換到註冊</button>
+          <button id="submitBtn" class="btn primary" type="button">登入</button>
+        </div>
+      </section>
+
+      <!-- 已登入：畫廊 -->
+      <section id="appSection" style="display:none">
+        <div class="statusbar" style="display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin-bottom:10px">
+          <div>目前使用者：<span id="currentUser" class="ok">—</span></div>
+          <div>相片總數：<span id="countAll">0</span></div>
+        </div>
+        <div id="grid" class="grid" aria-live="polite"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container" style="border-top:1px solid var(--border); margin-top:24px; padding-top:16px; color:var(--muted); font-size:13px; text-align:center;">
+      Day 25 完成：基本登入（LocalStorage 使用者 / SHA-256 雜湊）。不同帳號使用獨立命名空間儲存相片。
+    </div>
+  </footer>
+
+  <script>
+  // ============================
+  // Day 25：基本登入（LocalStorage 使用者 / SHA-256 雜湊）
+  // ============================
+
+  // Key 命名
+  const LS_USERS = 'pa_users_v1';                 // 使用者清單 [{email, saltHex, hashHex, createdAt}]
+  const LS_SESSION = 'pa_session_user_v1';        // 目前登入 email
+  function userPhotosKey(email){ return 'pa_u_'+ encodeURIComponent(String(email).toLowerCase()) +'_photos_v1'; }
+  const LEGACY_PHOTOS = 'pa_photos_v1';           // 舊版（未分使用者）資料，首次登入可選擇匯入
+
+  // ====== 儲存層偵測與回退（避免 sandbox 導致自我測試失敗） ======
+  const __MEM_STORE__ = new Map();
+  const HAS_LS = (function(){
+    try{ const k='__ls_test__'+Math.random(); localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }catch(e){ return false; }
+  })();
+  if(!HAS_LS){ console.warn('⚠️ 偵測到 localStorage 無法使用，已啟用「記憶體暫存」回退。資料只會存在當前分頁生命週期。'); }
+
+  // 工具（使用回退）
+  function safeGet(key){
+    if(HAS_LS){ try{ return localStorage.getItem(key); }catch(e){ console.warn('讀取 localStorage 失敗，改用記憶體暫存：', e); return __MEM_STORE__.get(key)||null; } }
+    return __MEM_STORE__.get(key)||null;
+  }
+  function safeSet(key,val){
+    if(HAS_LS){
+      try{ localStorage.setItem(key,val); return true; }
+      catch(e){ console.warn('寫入 localStorage 失敗，改用記憶體暫存：', e); __MEM_STORE__.set(key,val); return true; }
+    }
+    __MEM_STORE__.set(key,val); return true;
+  }
+
+  // UI 節點
+  const authSection = document.getElementById('authSection');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const password2Input = document.getElementById('password2');
+  const registerExtras = document.getElementById('registerExtras');
+  const authMsg = document.getElementById('authMsg');
+  const toggleModeBtn = document.getElementById('toggleModeBtn');
+  const submitBtn = document.getElementById('submitBtn');
+
+  const appSection = document.getElementById('appSection');
+  const authedToolbar = document.getElementById('authedToolbar');
+  const currentUserSpan = document.getElementById('currentUser');
+  const searchInput = document.getElementById('searchInput');
+  const fileInput = document.getElementById('fileInput');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  const grid = document.getElementById('grid');
+  const countAll = document.getElementById('countAll');
+
+  // 狀態
+  let mode = 'login'; // 'login' | 'register'
+  let photos = [];    // 目前登入者的相片
+  let query = '';
+
+  function loadUsers(){ const raw=safeGet(LS_USERS); if(!raw) return []; try{ const arr=JSON.parse(raw); return Array.isArray(arr)? arr : []; }catch(e){ return []; } }
+  function saveUsers(list){ return safeSet(LS_USERS, JSON.stringify(list)); }
+  function normalizeEmail(s){ return String(s||'').trim().toLowerCase(); }
+  function prettySize(bytes){ const u=['B','KB','MB','GB']; let i=0,n=bytes; while(n>=1024&&i<u.length-1){ n/=1024; i++; } return n.toFixed(1)+' '+u[i]; }
+  function fileNameWithoutExt(name){ if(typeof name!=='string') return 'image'; const i=name.lastIndexOf('.'); return i>0? name.slice(0,i): (name||'image'); }
+  function fmtFull(ts){ const d=new Date(ts||Date.now()); function P(n){return String(n).padStart(2,'0')} return d.getFullYear()+'-'+P(d.getMonth()+1)+'-'+P(d.getDate())+' '+P(d.getHours())+':'+P(d.getMinutes()); }
+
+  // ====== SHA-256：WebCrypto 或純 JS 後備 ======
+  function toHex(bytes){ return Array.prototype.map.call(bytes, function(b){ return ('0'+b.toString(16)).slice(-2); }).join(''); }
+  async function sha256HexWebCrypto(str){ const enc=new TextEncoder(); const data=enc.encode(str); const buf=await crypto.subtle.digest('SHA-256', data); return toHex(new Uint8Array(buf)); }
+  function sha256HexPortable(str){
+    // 輕量純 JS 實作（適用於不支援 WebCrypto 或非安全環境）
+    function rrot(n,x){ return (x>>>n) | (x<<(32-n)); }
+    function ch(x,y,z){ return (x & y) ^ (~x & z); }
+    function maj(x,y,z){ return (x & y) ^ (x & z) ^ (y & z); }
+    function S0(x){ return rrot(2,x) ^ rrot(13,x) ^ rrot(22,x); }
+    function S1(x){ return rrot(6,x) ^ rrot(11,x) ^ rrot(25,x); }
+    function s0(x){ return rrot(7,x) ^ rrot(18,x) ^ (x>>>3); }
+    function s1(x){ return rrot(17,x) ^ rrot(19,x) ^ (x>>>10); }
+    function toBytesUTF8(s){
+      var out=[]; for(var i=0;i<s.length;i++){
+        var c=s.charCodeAt(i);
+        if(c<128){ out.push(c); }
+        else if(c<2048){ out.push(192|(c>>>6), 128|(c&63)); }
+        else if((c&0xFC00)===0xD800 && i+1<s.length && (s.charCodeAt(i+1)&0xFC00)===0xDC00){
+          var code = 0x10000 + ((c&0x3FF)<<10) + (s.charCodeAt(++i)&0x3FF);
+          out.push(240|(code>>>18), 128|((code>>>12)&63), 128|((code>>>6)&63), 128|(code&63));
+        } else { out.push(224|(c>>>12), 128|((c>>>6)&63), 128|(c&63)); }
+      }
+      return out;
+    }
+    var K=[
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+    var bytes = toBytesUTF8(str);
+    var l = bytes.length;
+    bytes.push(0x80);
+    while((bytes.length % 64) !== 56) bytes.push(0);
+    var hi = Math.floor((l / 0x20000000)); // 高 32 bits
+    var lo = (l << 3) >>> 0;               // 低 32 bits（位元數）
+    for(var i=0;i<4;i++) bytes.push((hi >>> ((3-i)*8)) & 255);
+    for(var i2=0;i2<4;i2++) bytes.push((lo >>> ((3-i2)*8)) & 255);
+
+    var H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    var w=new Array(64);
+    for(var j=0;j<bytes.length; j+=64){
+      for(var t=0;t<16;t++){
+        var i4=j + t*4;
+        w[t] = ((bytes[i4]<<24) | (bytes[i4+1]<<16) | (bytes[i4+2]<<8) | (bytes[i4+3]))>>>0;
+      }
+      for(var t2=16;t2<64;t2++) w[t2] = (s1(w[t2-2]) + w[t2-7] + s0(w[t2-15]) + w[t2-16]) >>> 0;
+      var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+      for(var t3=0;t3<64;t3++){
+        var T1 = (h + S1(e) + ch(e,f,g) + K[t3] + w[t3])>>>0;
+        var T2 = (S0(a) + maj(a,b,c))>>>0;
+        h=g; g=f; f=e; e=(d + T1)>>>0; d=c; c=b; b=a; a=(T1 + T2)>>>0;
+      }
+      H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0; H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
+    }
+    var out=''; for(var k=0;k<8;k++){ out += ('00000000'+H[k].toString(16)).slice(-8); }
+    return out;
+  }
+  async function sha256Hex(str){
+    try{ if(typeof crypto!=='undefined' && crypto.subtle && crypto.subtle.digest){ return await sha256HexWebCrypto(str); } }catch(e){ /* fallthrough */ }
+    return sha256HexPortable(str);
+  }
+  async function hashPassword(password, saltHex){ const combo = saltHex + ':' + password; return sha256Hex(combo); }
+
+  // ====== 使用者 CRUD ======
+  async function register(email, password){
+    const users = loadUsers();
+    const e = normalizeEmail(email);
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) throw new Error('Email 格式不正確');
+    if((password||'').length < 8) throw new Error('密碼需至少 8 碼');
+    if(users.some(function(u){return u.email===e;})) throw new Error('此 Email 已被註冊');
+    const salt = (function(){
+      // 產生隨機 salt（若環境不支援 getRandomValues 則退回 Math.random）
+      try{ const a=new Uint8Array(16); (crypto.getRandomValues)(a); return toHex(a); }catch(_){ let out=''; for(let i=0;i<16;i++) out += ('0'+(Math.random()*256|0).toString(16)).slice(-2); return out; }
+    })();
+    const hash = await hashPassword(password, salt);
+    const user = { email: e, saltHex: salt, hashHex: hash, createdAt: Date.now() };
+    users.push(user);
+    saveUsers(users);
+    // 建立空的相片命名空間
+    safeSet(userPhotosKey(e), JSON.stringify([]));
+    return user;
+  }
+  async function login(email, password){
+    const users = loadUsers();
+    const e = normalizeEmail(email);
+    const u = users.find(function(x){return x.email===e;});
+    if(!u) throw new Error('查無此帳號');
+    const hash = await hashPassword(password, u.saltHex);
+    if(hash !== u.hashHex) throw new Error('密碼不正確');
+    safeSet(LS_SESSION, e);
+    return u;
+  }
+  function logout(){ safeSet(LS_SESSION, ''); }
+  function currentUserEmail(){ const raw=safeGet(LS_SESSION)||''; return normalizeEmail(raw); }
+
+  // ====== 相片儲存（每位使用者各自的 key） ======
+  function loadPhotos(email){ const key=userPhotosKey(email); const raw=safeGet(key); if(!raw){ return []; } try{ const arr=JSON.parse(raw); return Array.isArray(arr)? arr: []; }catch(e){ return []; } }
+  function savePhotos(email, list){ const key=userPhotosKey(email); return safeSet(key, JSON.stringify(list||[])); }
+
+  // 讀檔為 DataURL
+  function readFileAsDataURL(file){ return new Promise(function(resolve,reject){ const r=new FileReader(); r.onerror=function(){reject(new Error('讀檔失敗'))}; r.onload=function(){resolve(r.result)}; r.readAsDataURL(file); }); }
+
+  // ====== UI：登入/註冊 ======
+  function setMode(m){ mode=m; if(m==='register'){ registerExtras.style.display='block'; toggleModeBtn.textContent='切換到登入'; submitBtn.textContent='註冊'; authMsg.textContent=''; authMsg.className='muted'; } else { registerExtras.style.display='none'; toggleModeBtn.textContent='切換到註冊'; submitBtn.textContent='登入'; authMsg.textContent=''; authMsg.className='muted'; } }
+  toggleModeBtn.addEventListener('click', function(){ setMode(mode==='login'? 'register':'login'); });
+
+  submitBtn.addEventListener('click', async function(){
+    const emailVal = emailInput.value||'';
+    const passVal = passwordInput.value||'';
+    const pass2Val = password2Input.value||'';
+    try{
+      if(mode==='register'){
+        if(passVal!==pass2Val) throw new Error('兩次輸入的密碼不一致');
+        const user = await register(emailVal, passVal);
+        authMsg.textContent='註冊成功，已自動切換到登入，請輸入密碼登入。';
+        authMsg.className='ok';
+        setMode('login');
+        emailInput.value = user.email; passwordInput.value=''; password2Input.value='';
+      } else {
+        const user = await login(emailVal, passVal);
+        emailInput.value=''; passwordInput.value=''; password2Input.value='';
+        onAuthed(user.email);
+      }
+    }catch(err){ authMsg.textContent=err.message; authMsg.className='error'; }
+  });
+
+  // ====== UI：登入後 ======
+  function render(){
+    const q=(query||'').trim().toLowerCase();
+    const data = q? photos.filter(function(p){
+      const hay=[p.title||'', p.desc||'', (p.tags||[]).join(' '), p.name||''].join(' ').toLowerCase();
+      return hay.indexOf(q)>=0;
+    }): photos.slice();
+
+    const frag=document.createDocumentFragment();
+    if(data.length===0){ const empty=document.createElement('div'); empty.className='card'; empty.style.padding='20px'; empty.textContent = photos.length? '沒有符合的結果。' : '尚無照片，請先上傳。'; frag.appendChild(empty); }
+    else { data.forEach(function(p){
+      const card=document.createElement('article'); card.className='card'; card.dataset.id=p.id;
+      const th=document.createElement('div'); th.className='thumb'; const img=document.createElement('img'); img.src=p.dataUrl; img.alt=p.title||p.name; th.appendChild(img);
+      const meta=document.createElement('div'); meta.className='meta';
+      const titleRow=document.createElement('div'); titleRow.className='title-row';
+      const title=document.createElement('div'); title.className='title'; title.textContent=p.title||fileNameWithoutExt(p.name);
+      const time=document.createElement('div'); time.className='time'; time.textContent='時間：'+fmtFull(p.lastModified)+'｜'+prettySize(p.size||0);
+      const tagsWrap=document.createElement('div'); tagsWrap.className='tags'; (p.tags||[]).forEach(function(t){ const chip=document.createElement('span'); chip.className='tag'; chip.textContent=t; tagsWrap.appendChild(chip)});
+      meta.appendChild(titleRow); meta.appendChild(time); meta.appendChild(tagsWrap); titleRow.appendChild(title);
+      card.appendChild(th); card.appendChild(meta); frag.appendChild(card);
+    }); }
+
+    grid.innerHTML=''; grid.appendChild(frag);
+    countAll.textContent = String(photos.length);
+  }
+
+  searchInput.addEventListener('input', function(e){ query=e.target.value||''; render(); });
+
+  fileInput.addEventListener('change', async function(e){
+    const files=Array.prototype.slice.call(e.target.files||[]); if(!files.length) return;
+    const images = files.filter(function(f){ return f.type && f.type.indexOf('image/')===0; });
+    const non = files.filter(function(f){ return !f.type || f.type.indexOf('image/')!==0; });
+    if(non.length) alert('已略過非圖片檔案:\n'+ non.map(function(f){return '• '+f.name}).join('\n'));
+    const email = currentUserEmail(); if(!email){ alert('尚未登入'); return; }
+    for(let i=0;i<images.length;i++){
+      const file=images[i];
+      try{
+        const dataUrl = await readFileAsDataURL(file);
+        photos.push({ id: (Math.random().toString(36).slice(2)+Date.now().toString(36)), dataUrl: String(dataUrl), name: file.name, lastModified: file.lastModified, size: file.size, title: fileNameWithoutExt(file.name), desc: '', tags: [] });
+      }catch(err){ console.warn('轉換 DataURL 失敗：', err); }
+    }
+    savePhotos(email, photos);
+    e.target.value='';
+    render();
+  });
+
+  logoutBtn.addEventListener('click', function(){ logout(); photos=[]; query=''; showAuthed(false); authMsg.textContent='已登出'; authMsg.className='muted'; });
+
+  function showAuthed(is){ authSection.style.display = is? 'none':'grid'; appSection.style.display = is? 'block':'none'; authedToolbar.style.display = is? 'grid':'none'; }
+
+  function maybeMigrateLegacy(email){
+    // 將舊版未分使用者的資料，提議複製到此使用者命名空間（一次性）
+    try{
+      const key = LEGACY_PHOTOS; const raw=safeGet(key); if(!raw) return;
+      const userKey=userPhotosKey(email); const hasUserData = !!safeGet(userKey);
+      if(hasUserData){ return; }
+      const ok = confirm('偵測到舊版相片資料（未分使用者）。是否將其複製到此帳號的相簿？（不會刪除舊資料）');
+      if(ok){
+        const arr = JSON.parse(raw); if(Array.isArray(arr)){ safeSet(userKey, JSON.stringify(arr)); photos = arr.slice(); render(); alert('已匯入舊資料到你的帳號。'); }
+      }
+    }catch(e){ /* ignore */ }
+  }
+
+  function onAuthed(email){
+    showAuthed(true);
+    currentUserSpan.textContent = email;
+    photos = loadPhotos(email);
+    if(photos.length===0){ maybeMigrateLegacy(email); }
+    render();
+  }
+
+  // ====== 自我測試（更健壯：支援無 localStorage / 無 WebCrypto） ======
+  async function runSelfTests(){
+    console.groupCollapsed('🔎 Self-tests for Day 25 (Auth)');
+    try{
+      console.info('Storage 模式：', HAS_LS? 'localStorage' : 'Memory fallback');
+      const cryptoOK = (typeof crypto!=='undefined' && crypto.subtle && crypto.subtle.digest);
+      console.info('WebCrypto：', cryptoOK? '可用' : '不可用（改用純 JS）');
+
+      // 1) 雜湊一致性與差異性
+      const salt='a1b2c3'; const pw='P@ssw0rd!';
+      const h1 = await hashPassword(pw, salt); const h2 = await hashPassword(pw, salt); const h3 = await hashPassword(pw+'x', salt);
+      console.assert(h1===h2 && h1.length===64, 'SHA-256 應一致且為 64 hex');
+      console.assert(h1!==h3, '不同輸入應得到不同雜湊');
+
+      // 備份目前資料（避免污染）
+      const usersBackup = loadUsers();
+      const sessBackup = safeGet(LS_SESSION);
+
+      // 2) 註冊/登入流程（在隔離空間內測）
+      saveUsers([]); // 清空使用者清單（若為 memory fallback，僅在記憶體裡）
+      let u = await register('sandbox@example.com', '12345678');
+      console.assert(u && u.email==='sandbox@example.com', '註冊成功');
+      let threw=false; try{ await login('sandbox@example.com','badpass'); }catch(e){ threw=true; }
+      console.assert(threw, '錯誤密碼應登入失敗');
+      let u2 = await login('sandbox@example.com','12345678');
+      console.assert(u2 && u2.email==='sandbox@example.com', '正確密碼登入成功');
+
+      // 3) Email 正規化與重複註冊阻擋
+      let errDup=false; try{ await register('SANDBOX@EXAMPLE.com', 'abcdefgh'); }catch(e){ errDup=true; }
+      console.assert(errDup, '相同 Email（大小寫不同）應被視為重複');
+
+      // 4) 多使用者命名空間隔離
+      const kA = userPhotosKey('a@example.com'); const kB = userPhotosKey('b@example.com');
+      console.assert(kA!==kB, '不同帳號應對應不同儲存 key');
+      safeSet(kA, JSON.stringify([{id:'p1'}]));
+      safeSet(kB, JSON.stringify([{id:'p2'},{id:'p3'}]));
+      const aLen = JSON.parse(safeGet(kA)||'[]').length;
+      const bLen = JSON.parse(safeGet(kB)||'[]').length;
+      console.assert(aLen===1 && bLen===2, '多使用者相片空間互不影響');
+
+      // 還原使用者/會話
+      saveUsers(usersBackup);
+      sessBackup==null ? safeSet(LS_SESSION,'') : safeSet(LS_SESSION, sessBackup);
+      console.log('✅ 自我測試通過');
+    }catch(err){ console.error('❌ 自我測試失敗', err); }
+    console.groupEnd();
+  }
+
+  // ====== 初始化 ======
+  (function init(){
+    setMode('login');
+    const authed = currentUserEmail();
+    if(authed){ onAuthed(authed); }
+    runSelfTests();
+  })();
+  </script>
+</body>
+</html>
